@@ -75,14 +75,7 @@ describe("Pool Factory test", function () {
       unsafeAllowCustomTypes: true,
     });
 
-    factory = await createFactory(
-      ethers,
-      dao,
-      beaconAccess,
-      beaconLP,
-      beaconPrematchCore,
-      contracts.beaconAzuroBet
-    );
+    factory = await createFactory(ethers, dao, beaconAccess, beaconLP, beaconPrematchCore, contracts.beaconAzuroBet);
   });
   it("Create new pool", async () => {
     // Create pool

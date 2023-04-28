@@ -35,6 +35,7 @@ contract FreeBet is ERC721Upgradeable, OwnableUpgradeable {
     mapping(uint256 => AzuroBet) public azuroBets;
     mapping(uint256 => uint64) public expirationTime;
     uint256 public lastTokenId;
+    address public manager;
 
     event BettorWin(
         address indexed core,
@@ -64,6 +65,7 @@ contract FreeBet is ERC721Upgradeable, OwnableUpgradeable {
     event FreeBetsResolved(uint256[] ids, uint256 unlockedAmount);
     event LpChanged(address indexed newLp);
     event PayoutsResolved(uint256[] azuroBetId);
+    event ManagerChanged(address newManager);
 
     error AlreadyResolved();
     error BetExpired();
@@ -76,12 +78,13 @@ contract FreeBet is ERC721Upgradeable, OwnableUpgradeable {
     error WrongToken();
     error ZeroAmount();
     error ZeroDuration();
+    error OnlyManager();
 
     /**
-     * @notice Throw if caller have no access to function with selector `selector`.
+     * @notice Throw if caller is not manager.
      */
-    modifier restricted(bytes4 selector) {
-        lp.checkAccess(msg.sender, address(this), selector);
+    modifier onlyManager() {
+        if (msg.sender != manager) revert OnlyManager();
         _;
     }
 
@@ -96,6 +99,14 @@ contract FreeBet is ERC721Upgradeable, OwnableUpgradeable {
         __Ownable_init();
         if (token_ == address(0)) revert WrongToken();
         token = token_;
+    }
+
+    /**
+     * @notice Owner: set manager.
+     */
+    function setManager(address manager_) external onlyOwner {
+        manager = manager_;
+        emit ManagerChanged(manager_);
     }
 
     /**
@@ -169,10 +180,7 @@ contract FreeBet is ERC721Upgradeable, OwnableUpgradeable {
      * @notice Withdraw unlocked token reserves.
      * @param  amount amount to withdraw
      */
-    function withdrawReserve(uint128 amount)
-        external
-        restricted(this.withdrawReserve.selector)
-    {
+    function withdrawReserve(uint128 amount) external onlyManager {
         _checkInsufficient(amount);
 
         TransferHelper.safeTransfer(token, msg.sender, amount);
@@ -182,10 +190,7 @@ contract FreeBet is ERC721Upgradeable, OwnableUpgradeable {
      * @notice Withdraw unlocked token reserves in native currency.
      * @param  amount amount to withdraw
      */
-    function withdrawReserveNative(uint128 amount)
-        external
-        restricted(this.withdrawReserveNative.selector)
-    {
+    function withdrawReserveNative(uint128 amount) external onlyManager {
         _checkInsufficient(amount);
 
         IWNative(token).withdraw(amount);
@@ -199,7 +204,7 @@ contract FreeBet is ERC721Upgradeable, OwnableUpgradeable {
      */
     function mintBatch(address[] calldata receivers, Bet calldata bet)
         external
-        restricted(this.mintBatch.selector)
+        onlyManager
     {
         uint256 lastTokenId_ = lastTokenId;
         uint256 freeBetId = lastTokenId_;
@@ -228,10 +233,7 @@ contract FreeBet is ERC721Upgradeable, OwnableUpgradeable {
      * @param  to address to mint free bet to
      * @param  bet bet's data
      */
-    function mint(address to, Bet calldata bet)
-        external
-        restricted(this.mint.selector)
-    {
+    function mint(address to, Bet calldata bet) external onlyManager {
         _checkInsufficient(bet.amount);
 
         lockedReserve += bet.amount;

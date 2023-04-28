@@ -7,7 +7,6 @@ const {
   tokens,
   prepareStand,
   prepareAccess,
-  prepareFreeBetRoles,
   calcGas,
   createCondition,
   timeShiftBy,
@@ -151,8 +150,7 @@ describe("FreeBet test", function () {
 
     await freebet.setLp(lp.address);
 
-    const freebetManagerRoleId = await prepareFreeBetRoles(access, freebet, poolOwner);
-    await grantRole(access, poolOwner, maintainer.address, freebetManagerRoleId);
+    await freebet.setManager(maintainer.address);
 
     await factoryOwner.sendTransaction({ to: wxDAI.address, value: tokens(8_000_000) });
 
@@ -195,21 +193,18 @@ describe("FreeBet test", function () {
     await expect(freebet.connect(maintainer).setLp(lp.address)).to.be.revertedWith("Ownable: account is not the owner");
   });
   it("Check only maintainer", async () => {
-    await expect(freebet.connect(bettor1).withdrawReserve(100)).to.be.revertedWithCustomError(
-      access,
-      "AccessNotGranted"
-    );
+    await expect(freebet.connect(bettor1).withdrawReserve(100)).to.be.revertedWithCustomError(freebet, "OnlyManager");
     await expect(freebet.connect(bettor1).withdrawReserveNative(100)).to.be.revertedWithCustomError(
-      access,
-      "AccessNotGranted"
+      freebet,
+      "OnlyManager"
     );
     await expect(freebet.connect(bettor1).mint(bettor2.address, newBet)).to.be.revertedWithCustomError(
-      access,
-      "AccessNotGranted"
+      freebet,
+      "OnlyManager"
     );
     await expect(
       freebet.connect(poolOwner).mintBatch([bettor2.address, bettor3.address], newBet)
-    ).to.be.revertedWithCustomError(access, "AccessNotGranted");
+    ).to.be.revertedWithCustomError(freebet, "OnlyManager");
   });
 
   it("Should add funds for any user", async () => {

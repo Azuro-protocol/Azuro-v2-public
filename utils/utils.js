@@ -353,7 +353,9 @@ const prepareEmptyStand = async (
         signer: lpOwner,
       });
       try {
-        await upgrades.upgradeBeacon(process.env.BEACON_CORE_ADDRESS, PrematchCore, { unsafeAllowLinkedLibraries: true });
+        await upgrades.upgradeBeacon(process.env.BEACON_CORE_ADDRESS, PrematchCore, {
+          unsafeAllowLinkedLibraries: true,
+        });
       } catch (err) {
         console.log("⚠️Core not upgraded:", err);
       }

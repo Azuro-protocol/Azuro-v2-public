@@ -1,11 +1,11 @@
 const { ethers } = require("hardhat");
 const hre = require("hardhat");
-const { getTimeout, prepareFreeBetRoles, grantRole } = require("../../utils/utils");
+const { getTimeout } = require("../../utils/utils");
 
 async function main() {
   const TOKEN_ADDRESS = process.env.TOKEN_ADDRESS;
   const LP_ADDRESS = process.env.LP_ADDRESS;
-  const FREEBET_MANAGERS = JSON.parse(process.env.FREEBET_MANAGERS ?? "[]");
+  const FREEBET_MANAGER = process.env.FREEBET_MANAGER;
 
   const ACCESS_ADDRESS = process.env.ACCESS_ADDRESS;
   const chainId = await hre.network.provider.send("eth_chainId");
@@ -22,6 +22,9 @@ async function main() {
   await freeBet.deployed();
   await freeBet.setLp(LP_ADDRESS);
   await timeout();
+  await freeBet.setLp(LP_ADDRESS);
+  await timeout();
+  console.log("FREEBET MANAGER:", FREEBET_MANAGER);
 
   console.log(
     "\nACCESS:",
@@ -33,15 +36,6 @@ async function main() {
     "\nTOKEN:",
     TOKEN_ADDRESS
   );
-
-  const freeBetRoleId = await prepareFreeBetRoles(access, freeBet, deployer);
-  console.log(`\nAccess roles prepared:\n- FreeBet Manager:`, freeBetRoleId.toString());
-
-  for (const iterator of FREEBET_MANAGERS.keys()) {
-    await timeout();
-    await grantRole(access, deployer, FREEBET_MANAGERS[iterator], freeBetRoleId);
-  }
-  console.log("FREEBET MANAGERS:", FREEBET_MANAGERS);
 }
 
 main()

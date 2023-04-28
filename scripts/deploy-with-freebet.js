@@ -8,7 +8,6 @@ const {
   createPool,
   grantRole,
   prepareRoles,
-  prepareFreeBetRoles,
   getLPNFTTokenDetails,
 } = require("../utils/utils");
 
@@ -16,7 +15,7 @@ const TOKEN_ADDRESS = process.env.TOKEN_ADDRESS;
 const ORACLES = JSON.parse(process.env.ORACLES ?? "[]");
 const MAINTAINERS = JSON.parse(process.env.MAINTAINERS ?? "[]");
 const ODDS_MANAGERS = JSON.parse(process.env.ODDS_MANAGERS ?? "[]");
-const FREEBET_MANAGERS = JSON.parse(process.env.FREEBET_MANAGERS ?? "[]");
+const FREEBET_MANAGER = process.env.FREEBET_MANAGER;
 
 async function main() {
   const [deployer] = await ethers.getSigners();
@@ -24,9 +23,8 @@ async function main() {
   const MULTIPLIER = 1e12;
   const daoFee = MULTIPLIER * 0.09; // 9%
   const dataProviderFee = MULTIPLIER * 0.01; // 1%
-  const affiliateFee = MULTIPLIER * 0.33; // 33%
 
-  let token, factory, beaconAccess, beaconLP, beaconPrematchCore, beaconAzuroBet, affiliateHelper;
+  let token, factory, beaconAccess, beaconLP, beaconPrematchCore, beaconLiveCore, beaconAzuroBet;
   let summary = {};
 
   console.log("Deployer wallet:", deployer.address);
@@ -42,13 +40,12 @@ async function main() {
 
   // Beacons
   {
-    ({ beaconAccess, beaconLP, beaconPrematchCore, beaconAzuroBet, affiliateHelper } = await deployContracts(
+    ({ beaconAccess, beaconLP, beaconPrematchCore, beaconLiveCore, beaconAzuroBet } = await deployContracts(
       ethers,
       deployer
     ));
     await timeout();
 
-    console.log("* Libraries *\nAffiliateHelper:", affiliateHelper.address);
     console.log(
       "\n* Beacons *\nAccess:",
       beaconAccess.address,
@@ -73,7 +70,15 @@ async function main() {
 
   // Pool Factory
   {
-    factory = await createFactory(ethers, deployer, beaconAccess, beaconLP, beaconPrematchCore, beaconAzuroBet);
+    factory = await createFactory(
+      ethers,
+      deployer,
+      beaconAccess,
+      beaconLP,
+      beaconPrematchCore,
+      beaconLiveCore,
+      beaconAzuroBet
+    );
     await timeout();
     const factoryImplAddress = await upgrades.erc1967.getImplementationAddress(factory.address);
 
@@ -90,13 +95,11 @@ async function main() {
       ({ access, core, lp, azuroBet } = await createPool(
         ethers,
         factory,
-        affiliateHelper,
         deployer,
         token.address,
         1e19,
         daoFee,
         dataProviderFee,
-        affiliateFee,
         oracle.address
       ));
 
@@ -104,6 +107,9 @@ async function main() {
       await timeout();
       await freeBet.deployed();
       await freeBet.setLp(lp.address);
+      await timeout();
+      await freeBet.setManager(FREEBET_MANAGER);
+      console.log("FREEBET MANAGER:", FREEBET_MANAGER);
 
       console.log(
         "\nACCESS:",
@@ -136,16 +142,13 @@ async function main() {
       console.log("Liquidity added:", lpnft.amount.toString(), "\nLPNFT:", lpnft.tokenId);
 
       const roleIds = await prepareRoles(access, deployer, lp, core);
-      const freeBetRoleId = await prepareFreeBetRoles(access, freeBet, deployer);
       console.log(
         `\nAccess roles prepared:\n- Oracle:`,
         roleIds.oracle.toString(),
         "\n- Maintainer:",
         roleIds.maintainer.toString(),
         "\n- Odds Manager:",
-        roleIds.oddsManager.toString(),
-        "\n- FreeBet Manager:",
-        freeBetRoleId.toString()
+        roleIds.oddsManager.toString()
       );
 
       for (const iterator of ORACLES.keys()) {
@@ -165,12 +168,6 @@ async function main() {
         await timeout();
       }
       console.log("ODDS MANAGERS:", ODDS_MANAGERS);
-
-      for (const iterator of FREEBET_MANAGERS.keys()) {
-        await grantRole(access, deployer, FREEBET_MANAGERS[iterator], freeBetRoleId);
-        await timeout();
-      }
-      console.log("FREEBET MANAGERS:", FREEBET_MANAGERS);
     }
   }
 
@@ -204,13 +201,13 @@ async function main() {
     } catch (err) {}
     try {
       await hre.run("verify:verify", {
-        address: await beaconAzuroBet.implementation(),
+        address: await beaconLiveCore.implementation(),
         constructorArguments: [],
       });
     } catch (err) {}
     try {
       await hre.run("verify:verify", {
-        address: affiliateHelper.address,
+        address: await beaconAzuroBet.implementation(),
         constructorArguments: [],
       });
     } catch (err) {}
