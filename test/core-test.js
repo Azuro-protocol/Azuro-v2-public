@@ -1033,7 +1033,7 @@ describe("Prematch Core test", function () {
 
         // Check affiliate reward
         const balance = await wxDAI.balanceOf(affiliate.address);
-        await lp.connect(affiliate).claimAffiliateReward(core.address, getClaimParamsDef());
+        await lp.claimAffiliateRewardFor(core.address, getClaimParamsDef(), affiliate.address);
 
         expect(await wxDAI.balanceOf(affiliate.address)).to.be.equal(
           balance.add(profit.mul(affiliateFee).div(MULTIPLIER))

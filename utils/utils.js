@@ -669,7 +669,7 @@ const makeWithdrawPayoutNative = async (lp, core, account, tokenId) => {
 };
 
 const claimAffiliateReward = async (lp, affiliate, core, dataParam) => {
-  let tx = await lp.connect(affiliate)["claimAffiliateReward(address,bytes)"](core.address, dataParam);
+  let tx = await lp["claimAffiliateRewardFor(address,bytes,address)"](core.address, dataParam, affiliate.address);
   let res = await getClaimAffiliateRewardDetails(tx);
   return { affiliate: res.affiliate, amount: res.amount };
 };

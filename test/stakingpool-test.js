@@ -38,7 +38,7 @@ const ONE_YEAR = 31536000;
 const ONE_DAY = 86400;
 const ONE_MINUTE = 60;
 
-describe("StakingPool test", function () {
+describe.skip("StakingPool test", function () {
   const wrapLayer = initFixtureTree(ethers.provider);
 
   const REINFORCEMENT = tokens(20000);

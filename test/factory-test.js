@@ -185,10 +185,10 @@ describe("Pool Factory test", function () {
     await expect(switchCore(pool2.lp, core, poolOwner, false)).to.be.revertedWithCustomError(lp, "UnknownCore");
 
     await expect(
-      lp.connect(poolOwner).claimAffiliateReward(pool2.core.address, getClaimParamsDef())
+      lp.claimAffiliateRewardFor(pool2.core.address, getClaimParamsDef(), poolOwner.address)
     ).to.be.revertedWithCustomError(lp, "UnknownCore");
     await expect(
-      pool2.lp.connect(poolOwner).claimAffiliateReward(core.address, getClaimParamsDef())
+      pool2.lp.claimAffiliateRewardFor(core.address, getClaimParamsDef(), poolOwner.address)
     ).to.be.revertedWithCustomError(lp, "UnknownCore");
 
     await expect(

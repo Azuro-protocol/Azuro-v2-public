@@ -2,7 +2,7 @@
 
 pragma solidity ^0.8.9;
 
-import "./IPrematchCore.sol";
+import "./ICore.sol";
 import "./IOwnable.sol";
 
 interface ILP is IOwnable {
@@ -49,7 +49,7 @@ interface ILP is IOwnable {
         uint128 minBet
     );
 
-    event AffiliateRewarded(address indexed affiliate, uint128 amount);
+    event AffiliateRewarded(address indexed affiliate, uint256 amount);
     event BettorWin(
         address indexed core,
         address indexed bettor,
@@ -66,7 +66,6 @@ interface ILP is IOwnable {
         uint48 indexed leaf,
         uint256 amount
     );
-    event LiquidityManagerChanged(address newLiquidityManager);
     event LiquidityRemoved(
         address indexed account,
         uint48 indexed leaf,
@@ -162,11 +161,13 @@ interface ILP is IOwnable {
 
     function changeDataProvider(address newDataProvider) external;
 
-    function claimAffiliateReward(address core, bytes calldata data)
-        external
-        returns (uint128);
+    function claimAffiliateRewardFor(
+        address core,
+        bytes calldata data,
+        address affiliate
+    ) external returns (uint256);
 
-    function claimReward() external returns (uint128);
+    function claimReward() external returns (uint256);
 
     function getReserve() external view returns (uint128);
 
@@ -177,7 +178,7 @@ interface ILP is IOwnable {
         uint48 leaf
     ) external returns (uint128 affiliatesReward);
 
-    function addCondition(uint256 gameId) external view returns (uint64);
+    function addCondition(uint256 gameId) external returns (uint64);
 
     function withdrawPayout(
         address core,

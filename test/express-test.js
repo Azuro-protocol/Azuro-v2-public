@@ -402,7 +402,7 @@ describe("BetExpress tests", function () {
       expect(await lp.lockedLiquidity()).to.be.eq(lockedBefore.add(payout.sub(newBet.amount)));
       expect(await lp.connect(bettor1).viewPayout(betExpress.address, 1)).to.be.eq(payout);
       await lp.connect(bettor1).withdrawPayout(betExpress.address, 1, false);
-      await lp.connect(affiliate).claimAffiliateReward(betExpress.address, ethers.utils.arrayify(0));
+      await lp.claimAffiliateRewardFor(betExpress.address, ethers.utils.arrayify(0), affiliate.address);
       await lp.connect(factoryOwner).claimReward();
       await lp.connect(dataProvider).claimReward();
 
@@ -428,7 +428,7 @@ describe("BetExpress tests", function () {
 
       expect(await lp.connect(bettor1).viewPayout(betExpress.address, 1)).to.be.eq(payout);
       await lp.connect(bettor1).withdrawPayout(betExpress.address, 1, false);
-      await lp.connect(affiliate).claimAffiliateReward(betExpress.address, ethers.utils.arrayify(0));
+      await lp.claimAffiliateRewardFor(betExpress.address, ethers.utils.arrayify(0), affiliate.address);
       await lp.connect(factoryOwner).claimReward();
       await lp.connect(dataProvider).claimReward();
 
@@ -458,7 +458,7 @@ describe("BetExpress tests", function () {
 
       expect(await lp.connect(bettor1).viewPayout(betExpress.address, 1)).to.be.eq(payout);
       await lp.connect(bettor1).withdrawPayout(betExpress.address, 1, false);
-      await lp.connect(affiliate).claimAffiliateReward(betExpress.address, ethers.utils.arrayify(0));
+      await lp.claimAffiliateRewardFor(betExpress.address, ethers.utils.arrayify(0), affiliate.address);
       await lp.connect(factoryOwner).claimReward();
       await lp.connect(dataProvider).claimReward();
 
@@ -479,7 +479,7 @@ describe("BetExpress tests", function () {
 
       expect(await lp.connect(bettor1).viewPayout(betExpress.address, 1)).to.be.eq(payout);
       await lp.connect(bettor1).withdrawPayout(betExpress.address, 1, false);
-      await lp.connect(affiliate).claimAffiliateReward(betExpress.address, ethers.utils.arrayify(0));
+      await lp.claimAffiliateRewardFor(betExpress.address, ethers.utils.arrayify(0), affiliate.address);
       await lp.connect(factoryOwner).claimReward();
       await lp.connect(dataProvider).claimReward();
 
@@ -518,7 +518,7 @@ describe("BetExpress tests", function () {
 
       expect(await lp.connect(bettor1).viewPayout(betExpress.address, 1)).to.be.eq(payout);
       await lp.connect(bettor1).withdrawPayout(betExpress.address, 1, false);
-      await lp.connect(affiliate).claimAffiliateReward(betExpress.address, ethers.utils.arrayify(0));
+      await lp.claimAffiliateRewardFor(betExpress.address, ethers.utils.arrayify(0), affiliate.address);
       await lp.connect(factoryOwner).claimReward();
       await lp.connect(dataProvider).claimReward();
 

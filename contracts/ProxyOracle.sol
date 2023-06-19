@@ -2,10 +2,10 @@
 
 pragma solidity ^0.8.9;
 
-import "../interface/IAccess.sol";
-import "../interface/ILP.sol";
-import "../interface/IProxyOracle.sol";
-import "../utils/OwnableUpgradeable.sol";
+import "./interface/IAccess.sol";
+import "./interface/ILP.sol";
+import "./interface/IProxyOracle.sol";
+import "./utils/OwnableUpgradeable.sol";
 
 /**
  * @notice Operation of oracles management tool.
@@ -85,16 +85,16 @@ contract ProxyOracle is OwnableUpgradeable, IProxyOracle {
     }
 
     /**
-     * @notice The batch version of {IPrematchCore-createCondition}.
+     * @notice The batch version of {ICore-createCondition}.
      * @param  core the address of the Core using for creating conditions
-     * @param  data an array of input data structures for creating conditions using {IPrematchCore-createCondition}
+     * @param  data an array of input data structures for creating conditions using {ICore-createCondition}
      */
     function createConditions(address core, CreateConditionData[] calldata data)
         external
         restricted(this.createConditions.selector)
     {
         // TODO: check if saving data[i] is more cheaper
-        IPrematchCore core_ = IPrematchCore(core);
+        ICore core_ = ICore(core);
         uint256 reinforcementLimit_ = reinforcementLimit;
         for (uint256 i = 0; i < data.length; ++i) {
             uint128 reinforcement = data[i].reinforcement;
@@ -112,7 +112,7 @@ contract ProxyOracle is OwnableUpgradeable, IProxyOracle {
     }
 
     /**
-     * @notice The batch version of {IPrematchCore-cancelCondition}.
+     * @notice The batch version of {ICore-cancelCondition}.
      * @param  core the address of the Core using for canceling conditions
      * @param  conditionIds IDs of the conditions to be canceled
      */
@@ -120,52 +120,52 @@ contract ProxyOracle is OwnableUpgradeable, IProxyOracle {
         external
         restricted(this.cancelConditions.selector)
     {
-        IPrematchCore core_ = IPrematchCore(core);
+        ICore core_ = ICore(core);
         for (uint256 i = 0; i < conditionIds.length; ++i) {
             core_.cancelCondition(conditionIds[i]);
         }
     }
 
     /**
-     * @notice The batch version of {IPrematchCore-changeOdds}.
+     * @notice The batch version of {ICore-changeOdds}.
      * @param  core the address of the Core using for changing odds
-     * @param  data an array of input data structures for changing odds using {IPrematchCore-changeOdds}.
+     * @param  data an array of input data structures for changing odds using {ICore-changeOdds}.
      */
     function changeOdds(address core, ChangeOddsData[] calldata data)
         external
         restricted(this.changeOdds.selector)
     {
-        IPrematchCore core_ = IPrematchCore(core);
+        ICore core_ = ICore(core);
         for (uint256 i = 0; i < data.length; ++i) {
             core_.changeOdds(data[i].conditionId, data[i].odds);
         }
     }
 
     /**
-     * @notice The batch version of {IPrematchCore-resolveConditions}.
+     * @notice The batch version of {ICore-resolveConditions}.
      * @param  core the address of the Core using for resolving conditions
-     * @param  data an array of input data structures for resolving conditions using {IPrematchCore-resolveConditions}.
+     * @param  data an array of input data structures for resolving conditions using {ICore-resolveConditions}.
      */
     function resolveConditions(
         address core,
         ResolveConditionData[] calldata data
     ) external restricted(this.resolveConditions.selector) {
-        IPrematchCore core_ = IPrematchCore(core);
+        ICore core_ = ICore(core);
         for (uint256 i = 0; i < data.length; ++i) {
             core_.resolveCondition(data[i].conditionId, data[i].outcomeWin);
         }
     }
 
     /**
-     * @notice The batch version of {IPrematchCore-stopConditions}.
+     * @notice The batch version of {ICore-stopConditions}.
      * @param  core the address of the Core using for stopping conditions
-     * @param  data an array of input data structures for stopping conditions using {IPrematchCore-stopConditions}.
+     * @param  data an array of input data structures for stopping conditions using {ICore-stopConditions}.
      */
     function stopConditions(address core, StopConditionData[] calldata data)
         external
         restricted(this.stopConditions.selector)
     {
-        IPrematchCore core_ = IPrematchCore(core);
+        ICore core_ = ICore(core);
         for (uint256 i = 0; i < data.length; ++i) {
             core_.stopCondition(data[i].conditionId, data[i].flag);
         }

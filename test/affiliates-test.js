@@ -77,7 +77,7 @@ describe("Affiliates test", function () {
     );
 
     try {
-      await lp.connect(affiliate).claimAffiliateReward(core.address, getClaimParamsDef());
+      await lp.claimAffiliateRewardFor(core.address, getClaimParamsDef(), affiliate.address);
     } catch {}
     await lp.connect(poolOwner).changeFee(2, affiliateFee);
   });
@@ -101,7 +101,7 @@ describe("Affiliates test", function () {
     expect(await core.getContributedConditionsCount(affiliate.address)).to.be.equal(1);
 
     balance = await wxDAI.balanceOf(affiliate.address);
-    await lp.connect(affiliate).claimAffiliateReward(core.address, getClaimParamsDef());
+    await lp.claimAffiliateRewardFor(core.address, getClaimParamsDef(), affiliate.address);
 
     expect(await core.getContributedConditionsCount(affiliate.address)).to.be.equal(0);
     expect(await wxDAI.balanceOf(affiliate.address)).to.be.equal(
@@ -130,7 +130,7 @@ describe("Affiliates test", function () {
     await core.connect(oracle).resolveCondition(condId, OUTCOMEWIN);
 
     balance = await wxDAI.balanceOf(affiliate.address);
-    await lp.connect(affiliate).claimAffiliateReward(core.address, getClaimParamsDef());
+    await lp.claimAffiliateRewardFor(core.address, getClaimParamsDef(), affiliate.address);
 
     expect(await wxDAI.balanceOf(affiliate.address)).to.be.equal(
       balance.add(
@@ -174,7 +174,7 @@ describe("Affiliates test", function () {
     await core.connect(oracle).resolveCondition(condId, OUTCOMEWIN);
 
     balance = await wxDAI.balanceOf(affiliate.address);
-    await lp.connect(affiliate).claimAffiliateReward(core.address, getClaimParamsDef());
+    await lp.claimAffiliateRewardFor(core.address, getClaimParamsDef(), affiliate.address);
 
     expect(await wxDAI.balanceOf(affiliate.address)).to.be.equal(
       balance.add(tokens(150).mul(affiliateFee).div(MULTIPLIER))
@@ -200,21 +200,21 @@ describe("Affiliates test", function () {
     const profit = tokens(175).sub(res.odds.mul(tokens(25)).div(MULTIPLIER));
 
     balance = await wxDAI.balanceOf(affiliate.address);
-    await lp.connect(affiliate).claimAffiliateReward(core.address, getClaimParamsDef());
+    await lp.claimAffiliateRewardFor(core.address, getClaimParamsDef(), affiliate.address);
     expect(await wxDAI.balanceOf(affiliate.address)).to.be.closeTo(
       balance.add(profit.mul(100).div(150).mul(affiliateFee).div(MULTIPLIER)),
       10
     );
 
     balance = await wxDAI.balanceOf(affiliate2.address);
-    await lp.connect(affiliate2).claimAffiliateReward(core.address, getClaimParamsDef());
+    await lp.claimAffiliateRewardFor(core.address, getClaimParamsDef(), affiliate2.address);
     expect(await wxDAI.balanceOf(affiliate2.address)).to.be.closeTo(
       balance.add(profit.mul(50).div(150).mul(affiliateFee).div(MULTIPLIER)),
       10
     );
 
     balance = await wxDAI.balanceOf(affiliate3.address);
-    await lp.connect(affiliate3).claimAffiliateReward(core.address, getClaimParamsDef());
+    await lp.claimAffiliateRewardFor(core.address, getClaimParamsDef(), affiliate3.address);
 
     expect(await wxDAI.balanceOf(affiliate3.address)).to.be.equal(balance);
   });
@@ -248,7 +248,7 @@ describe("Affiliates test", function () {
     await core.connect(oracle).resolveCondition(condId, OUTCOMEWIN);
 
     balance = await wxDAI.balanceOf(affiliate.address);
-    await lp.connect(affiliate).claimAffiliateReward(core.address, getClaimParamsDef());
+    await lp.claimAffiliateRewardFor(core.address, getClaimParamsDef(), affiliate.address);
 
     // 100 + 50 by affiliate
     expect(await wxDAI.balanceOf(affiliate.address)).to.be.equal(
@@ -261,14 +261,14 @@ describe("Affiliates test", function () {
     );
 
     balance = await wxDAI.balanceOf(poolOwner.address);
-    await lp.connect(poolOwner).claimAffiliateReward(core.address, getClaimParamsDef());
+    await lp.claimAffiliateRewardFor(core.address, getClaimParamsDef(), poolOwner.address);
 
     // 25 affiliate set to default affiliate -> lp.owner = poolOwner
     expect(await wxDAI.balanceOf(poolOwner.address)).to.be.equal(
       balance.add(tokens(25).mul(affiliateFee).div(MULTIPLIER))
     );
   });
-  it("PrematchCore is inactive", async function () {
+  it("Core is inactive", async function () {
     await makeBetGetTokenId(lp, core, bettor, affiliate.address, condId, tokens(100), OUTCOMELOSE, time + 100, 0);
 
     await switchCore(lp, core, poolOwner, false);
@@ -277,7 +277,7 @@ describe("Affiliates test", function () {
     await core.connect(oracle).resolveCondition(condId, OUTCOMEWIN);
 
     balance = await wxDAI.balanceOf(affiliate.address);
-    await lp.connect(affiliate).claimAffiliateReward(core.address, getClaimParamsDef());
+    await lp.claimAffiliateRewardFor(core.address, getClaimParamsDef(), affiliate.address);
 
     expect(await wxDAI.balanceOf(affiliate.address)).to.be.equal(
       balance.add(tokens(100).mul(affiliateFee).div(MULTIPLIER))
@@ -291,11 +291,11 @@ describe("Affiliates test", function () {
     await lp.connect(oracle).cancelGame(gameId);
 
     balance = await wxDAI.balanceOf(affiliate.address);
-    await lp.connect(affiliate).claimAffiliateReward(core.address, getClaimParamsDef());
+    await lp.claimAffiliateRewardFor(core.address, getClaimParamsDef(), affiliate.address);
     expect(await wxDAI.balanceOf(affiliate.address)).to.be.equal(balance);
 
     await expect(
-      lp.connect(affiliate).claimAffiliateReward(core.address, getClaimParamsDef())
+      lp.claimAffiliateRewardFor(core.address, getClaimParamsDef(), affiliate.address)
     ).to.be.revertedWithCustomError(core, "NoPendingReward");
   });
   it("Condition is canceled", async function () {
@@ -305,12 +305,12 @@ describe("Affiliates test", function () {
     await core.connect(oracle).cancelCondition(condId);
 
     balance = await wxDAI.balanceOf(affiliate.address);
-    await lp.connect(affiliate).claimAffiliateReward(core.address, getClaimParamsDef());
+    await lp.claimAffiliateRewardFor(core.address, getClaimParamsDef(), affiliate.address);
 
     expect(await wxDAI.balanceOf(affiliate.address)).to.be.equal(balance);
 
     await expect(
-      lp.connect(affiliate).claimAffiliateReward(core.address, getClaimParamsDef())
+      lp.claimAffiliateRewardFor(core.address, getClaimParamsDef(), affiliate.address)
     ).to.be.revertedWithCustomError(core, "NoPendingReward");
   });
   it("Condition is paused", async function () {
@@ -321,20 +321,20 @@ describe("Affiliates test", function () {
     timeShift(time + ONE_HOUR + ONE_MINUTE);
 
     balance = await wxDAI.balanceOf(affiliate.address);
-    await lp.connect(affiliate).claimAffiliateReward(core.address, getClaimParamsDef());
+    await lp.claimAffiliateRewardFor(core.address, getClaimParamsDef(), affiliate.address);
 
     expect(await wxDAI.balanceOf(affiliate.address)).to.be.equal(balance);
 
     await core.connect(oracle).resolveCondition(condId, OUTCOMEWIN);
 
-    await lp.connect(affiliate).claimAffiliateReward(core.address, getClaimParamsDef());
+    await lp.claimAffiliateRewardFor(core.address, getClaimParamsDef(), affiliate.address);
 
     expect(await wxDAI.balanceOf(affiliate.address)).to.be.equal(
       balance.add(tokens(100).mul(affiliateFee).div(MULTIPLIER))
     );
 
     await expect(
-      lp.connect(affiliate).claimAffiliateReward(core.address, getClaimParamsDef())
+      lp.claimAffiliateRewardFor(core.address, getClaimParamsDef(), affiliate.address)
     ).to.be.revertedWithCustomError(core, "NoPendingReward");
   });
   it("Condition doesn't make a profit", async function () {
@@ -367,7 +367,7 @@ describe("Affiliates test", function () {
     await core.connect(oracle).resolveCondition(condId, OUTCOMEWIN);
 
     balance = await wxDAI.balanceOf(affiliate.address);
-    await lp.connect(affiliate).claimAffiliateReward(core.address, getClaimParamsDef());
+    await lp.claimAffiliateRewardFor(core.address, getClaimParamsDef(), affiliate.address);
 
     expect(await wxDAI.balanceOf(affiliate.address)).to.be.equal(balance);
   });
@@ -393,7 +393,7 @@ describe("Affiliates test", function () {
     await core.connect(oracle).resolveCondition(condId, OUTCOMEWIN);
 
     balance = await wxDAI.balanceOf(affiliate.address);
-    await lp.connect(affiliate).claimAffiliateReward(core.address, getClaimParamsDef());
+    await lp.claimAffiliateRewardFor(core.address, getClaimParamsDef(), affiliate.address);
 
     expect(await wxDAI.balanceOf(affiliate.address)).to.be.equal(balance);
   });
@@ -409,7 +409,7 @@ describe("Affiliates test", function () {
     await core.connect(oracle).resolveCondition(condId, OUTCOMEWIN);
 
     balance = await wxDAI.balanceOf(affiliate.address);
-    await lp.connect(affiliate).claimAffiliateReward(core.address, getClaimParamsDef());
+    await lp.claimAffiliateRewardFor(core.address, getClaimParamsDef(), affiliate.address);
 
     expect(await wxDAI.balanceOf(affiliate.address)).to.be.equal(balance);
   });
@@ -420,14 +420,14 @@ describe("Affiliates test", function () {
     await core.connect(oracle).resolveCondition(condId, OUTCOMEWIN);
 
     balance = await wxDAI.balanceOf(affiliate.address);
-    await lp.connect(affiliate).claimAffiliateReward(core.address, getClaimParamsDef());
+    await lp.claimAffiliateRewardFor(core.address, getClaimParamsDef(), affiliate.address);
 
     expect(await wxDAI.balanceOf(affiliate.address)).to.be.equal(
       balance.add(tokens(100).mul(affiliateFee).div(MULTIPLIER))
     );
 
     await expect(
-      lp.connect(affiliate).claimAffiliateReward(core.address, getClaimParamsDef())
+      lp.claimAffiliateRewardFor(core.address, getClaimParamsDef(), affiliate.address)
     ).to.be.revertedWithCustomError(core, "NoPendingReward");
   });
   it("Affiliate gets a reward before all affiliated conditions are finished", async function () {
@@ -464,7 +464,7 @@ describe("Affiliates test", function () {
     }
 
     balance = await wxDAI.balanceOf(affiliate.address);
-    await lp.connect(affiliate).claimAffiliateReward(core.address, getClaimParamsDef());
+    await lp.claimAffiliateRewardFor(core.address, getClaimParamsDef(), affiliate.address);
 
     expect(await wxDAI.balanceOf(affiliate.address)).to.be.equal(
       balance.add(tokens(300).mul(affiliateFee).div(MULTIPLIER))
@@ -476,7 +476,7 @@ describe("Affiliates test", function () {
       await core.connect(oracle).resolveCondition(condIdStart + i * 2, OUTCOMEWIN);
     }
 
-    await lp.connect(affiliate).claimAffiliateReward(core.address, getClaimParamsDef());
+    await lp.claimAffiliateRewardFor(core.address, getClaimParamsDef(), affiliate.address);
 
     expect(await wxDAI.balanceOf(affiliate.address)).to.be.equal(
       balance.add(tokens(450).mul(affiliateFee).div(MULTIPLIER))
@@ -509,7 +509,7 @@ describe("Affiliates test", function () {
     let start = 6;
     while (start >= 0) {
       balance = await wxDAI.balanceOf(affiliate.address);
-      await lp.connect(affiliate).claimAffiliateReward(core.address, getClaimParams(start, 3));
+      await lp.claimAffiliateRewardFor(core.address, getClaimParams(start, 3), affiliate.address);
       expect(await wxDAI.balanceOf(affiliate.address)).to.be.equal(
         balance.add(tokens(300).mul(affiliateFee).div(MULTIPLIER))
       );
@@ -518,14 +518,14 @@ describe("Affiliates test", function () {
     }
 
     balance = await wxDAI.balanceOf(affiliate.address);
-    await lp.connect(affiliate).claimAffiliateReward(core.address, getClaimParams(0, 1));
+    await lp.claimAffiliateRewardFor(core.address, getClaimParams(0, 1), affiliate.address);
 
     expect(await core.getContributedConditionsCount(affiliate.address)).to.be.equal(0);
     expect(await wxDAI.balanceOf(affiliate.address)).to.be.equal(
       balance.add(tokens(100).mul(affiliateFee).div(MULTIPLIER))
     );
     await expect(
-      lp.connect(affiliate).claimAffiliateReward(core.address, getClaimParamsDef())
+      lp.claimAffiliateRewardFor(core.address, getClaimParamsDef(), affiliate.address)
     ).to.be.revertedWithCustomError(core, "NoPendingReward");
   });
   it('Affiliate gets a reward with the "count" parameter exceeding the number of unrewarded conditions', async function () {
@@ -550,7 +550,7 @@ describe("Affiliates test", function () {
     }
 
     balance = await wxDAI.balanceOf(affiliate.address);
-    await lp.connect(affiliate).claimAffiliateReward(core.address, getClaimParams(0, 10));
+    await lp.claimAffiliateRewardFor(core.address, getClaimParams(0, 10), affiliate.address);
 
     expect(await wxDAI.balanceOf(affiliate.address)).to.be.equal(
       balance.add(tokens(300).mul(affiliateFee).div(MULTIPLIER))
@@ -578,7 +578,7 @@ describe("Affiliates test", function () {
     await lp.connect(poolOwner).changeFee(2, newAffiliateFee);
 
     balance = await wxDAI.balanceOf(affiliate.address);
-    await lp.connect(affiliate).claimAffiliateReward(core.address, getClaimParamsDef());
+    await lp.claimAffiliateRewardFor(core.address, getClaimParamsDef(), affiliate.address);
     expect(await wxDAI.balanceOf(affiliate.address)).to.be.closeTo(
       balance.add(tokens(100).mul(affiliateFee).div(MULTIPLIER)),
       10
@@ -587,7 +587,7 @@ describe("Affiliates test", function () {
     await core.connect(oracle).resolveCondition(condId, OUTCOMEWIN);
 
     balance = await wxDAI.balanceOf(affiliate.address);
-    await lp.connect(affiliate).claimAffiliateReward(core.address, getClaimParamsDef());
+    await lp.claimAffiliateRewardFor(core.address, getClaimParamsDef(), affiliate.address);
     expect(await wxDAI.balanceOf(affiliate.address)).to.be.closeTo(
       balance.add(tokens(50).mul(newAffiliateFee).div(MULTIPLIER)),
       10
@@ -615,7 +615,7 @@ describe("Affiliates test", function () {
     }
 
     await expect(
-      lp.connect(affiliate).claimAffiliateReward(core.address, getClaimParams(4, 1))
+      lp.claimAffiliateRewardFor(core.address, getClaimParams(4, 1), affiliate.address)
     ).to.be.revertedWithCustomError(core, "StartOutOfRange");
   });
 });
