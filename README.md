@@ -74,5 +74,5 @@ Before deploy you need to set `.env` variables:
    npm run deploy-freebet %network%
    ```
 
-## Docs  
-https://docs.azuro.org/azuroprotocol/
+## Docs
+https://gem.azuro.org/contracts/overview
