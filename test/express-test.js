@@ -1,6 +1,7 @@
 const { expect } = require("chai");
-const { constants } = require("ethers");
+const { constants, BigNumber } = require("ethers");
 const { ethers } = require("hardhat");
+const { MULTIPLIER } = require("../utils/constants");
 const {
   getBlockTime,
   tokens,
@@ -18,11 +19,10 @@ const {
 const LIQUIDITY = tokens(2000000);
 const ONE_WEEK = 604800;
 const ONE_HOUR = 3600;
-const IPFS = ethers.utils.formatBytes32String("ipfs");
+
 const OUTCOMEWIN = 1;
 const OUTCOMELOSE = 2;
 const OUTCOMES = [OUTCOMEWIN, OUTCOMELOSE];
-const MULTIPLIER = 1e12;
 
 describe("BetExpress tests", function () {
   const wrapLayer = initFixtureTree(ethers.provider);
@@ -32,10 +32,9 @@ describe("BetExpress tests", function () {
   let now;
   let oracleGameId = 0;
 
-  const reinforcement = constants.WeiPerEther.mul(20000); // 10%
-  const marginality = MULTIPLIER * 0.1; // 10%
+  const reinforcement = constants.WeiPerEther.mul(20000);
+  const marginality = BigNumber.from(MULTIPLIER * 0.05); // 5%
   const maxSandboxShare = MULTIPLIER * 0.2; // 20%
-  const maxReinforcementShare = MULTIPLIER * 0.1; // 10%
 
   let subBet1, subBet2, subBet3;
   let oracleCondId;
@@ -43,7 +42,6 @@ describe("BetExpress tests", function () {
   const minDepo = tokens(10);
   const daoFee = MULTIPLIER * 0.09; // 9%
   const oracleFee = MULTIPLIER * 0.01; // 1%
-  const affiliateFee = MULTIPLIER * 0.33; // 33%
 
   async function deployAndInit() {
     [factoryOwner, poolOwner, dataProvider, bettor1, oracle, oracle2, maintainer, bettor2, bettor3, affiliate] =
@@ -58,13 +56,10 @@ describe("BetExpress tests", function () {
       minDepo,
       daoFee,
       oracleFee,
-      affiliateFee,
       LIQUIDITY
     ));
 
-    const LibraryMock = await ethers.getContractFactory("LibraryMock", {
-      signer: factoryOwner,
-    });
+    const LibraryMock = await ethers.getContractFactory("LibraryMock");
     coreTools = await LibraryMock.deploy();
     await coreTools.deployed();
 
@@ -96,16 +91,16 @@ describe("BetExpress tests", function () {
     betExpress = await BetExpress.attach(await getPluggedCore(plugTx));
 
     await changeReinforcementAbility(lp, betExpress, poolOwner, maxSandboxShare);
-    await betExpress.connect(poolOwner).setParams(marginality, maxReinforcementShare);
+    await betExpress.connect(poolOwner).changeReinforcement(reinforcement);
 
     await prepareAccess(access, poolOwner, oracle.address, oracle2.address, maintainer.address, roleIds);
     await grantRole(access, poolOwner, betExpress.address, roleIds.oddsManager);
 
     await factoryOwner.sendTransaction({ to: wxDAI.address, value: tokens(8_000_000) });
 
-    await createGame(lp, oracle, ++oracleGameId, IPFS, now + ONE_HOUR);
-    await createGame(lp, oracle, ++oracleGameId, IPFS, now + ONE_HOUR);
-    await createGame(lp, oracle, ++oracleGameId, IPFS, now + ONE_HOUR);
+    await createGame(lp, oracle, ++oracleGameId, now + ONE_HOUR);
+    await createGame(lp, oracle, ++oracleGameId, now + ONE_HOUR);
+    await createGame(lp, oracle, ++oracleGameId, now + ONE_HOUR);
 
     await createCondition(core, oracle, oracleGameId - 2, oracleCondId, [1, 1], OUTCOMES, reinforcement, marginality);
     await createCondition(core, oracle, oracleGameId - 1, ++oracleCondId, [3, 2], OUTCOMES, reinforcement, marginality);
@@ -113,17 +108,6 @@ describe("BetExpress tests", function () {
   }
 
   wrapLayer(deployAndInit);
-
-  it("Set incorrect BetExpress params", async () => {
-    await expect(
-      betExpress.connect(poolOwner).setParams(MULTIPLIER * 1.1, maxReinforcementShare)
-    ).to.be.revertedWithCustomError(betExpress, "IncorrectMargin");
-
-    await expect(betExpress.connect(poolOwner).setParams(marginality, MULTIPLIER * 1.1)).to.be.revertedWithCustomError(
-      betExpress,
-      "IncorrectMaxReinforcementShare"
-    );
-  });
 
   it("Can't accept express bet that contains similar gameIds or conditionIds in subbets", async () => {
     const amount = tokens(1000);
@@ -134,7 +118,7 @@ describe("BetExpress tests", function () {
     );
 
     await expect(
-      lp.connect(bettor1).bet(betExpress.address, amount, now + ONE_WEEK, [affiliate.address, subBets])
+      lp.connect(bettor1).bet(betExpress.address, amount, now + ONE_WEEK, [affiliate.address, 0, subBets])
     ).to.be.revertedWithCustomError(betExpress, "SameGameIdsNotAllowed");
 
     await createCondition(core, oracle, oracleGameId, oracleCondId + 1, [1, 2], OUTCOMES, reinforcement, marginality);
@@ -149,12 +133,12 @@ describe("BetExpress tests", function () {
     );
 
     await expect(
-      lp.connect(bettor1).bet(betExpress.address, amount, now + ONE_WEEK, [affiliate.address, subBets2])
+      lp.connect(bettor1).bet(betExpress.address, amount, now + ONE_WEEK, [affiliate.address, 0, subBets2])
     ).to.be.revertedWithCustomError(betExpress, "SameGameIdsNotAllowed");
   });
 
   it("Can't resolve nonexistent express bet", async () => {
-    await expect(lp.connect(bettor1).withdrawPayout(betExpress.address, 1, false)).to.be.revertedWith(
+    await expect(lp.connect(bettor1).withdrawPayout(betExpress.address, 1)).to.be.revertedWith(
       "ERC721: invalid token ID"
     );
 
@@ -162,6 +146,16 @@ describe("BetExpress tests", function () {
       betExpress,
       "BetNotExists"
     );
+
+    await expect(betExpress.calcPayout(1)).to.be.revertedWithCustomError(betExpress, "BetNotExists");
+  });
+
+  it("Can't change the maximum odds to a value that is smaller than one", async () => {
+    await expect(betExpress.connect(poolOwner).changeMaxOdds(MULTIPLIER - 1)).to.be.revertedWithCustomError(
+      betExpress,
+      "IncorrectMaxOdds"
+    );
+    await betExpress.connect(poolOwner).changeMaxOdds(MULTIPLIER);
   });
 
   it("Can't make bet if condition doesn't exist", async () => {
@@ -177,7 +171,7 @@ describe("BetExpress tests", function () {
       [[subBet1, subBet2, subBet3, subBet4]]
     );
 
-    await expect(lp.connect(bettor1).bet(betExpress.address, amount, now + ONE_WEEK, [affiliate.address, subBets]))
+    await expect(lp.connect(bettor1).bet(betExpress.address, amount, now + ONE_WEEK, [affiliate.address, 0, subBets]))
       .to.be.revertedWithCustomError(betExpress, "ConditionNotRunning")
       .withArgs(oracleCondId + 1);
   });
@@ -190,7 +184,7 @@ describe("BetExpress tests", function () {
     );
 
     await expect(
-      lp.connect(bettor1).bet(betExpress.address, tokens(1000), now + ONE_WEEK, [affiliate.address, subBets2])
+      lp.connect(bettor1).bet(betExpress.address, tokens(1000), now + ONE_WEEK, [affiliate.address, 0, subBets2])
     )
       .to.be.revertedWithCustomError(betExpress, "ConditionNotRunning")
       .withArgs(oracleCondId);
@@ -203,7 +197,7 @@ describe("BetExpress tests", function () {
     );
 
     await expect(
-      lp.connect(bettor1).bet(betExpress.address, tokens(1000), now + ONE_WEEK, [affiliate.address, subBets2])
+      lp.connect(bettor1).bet(betExpress.address, tokens(1000), now + ONE_WEEK, [affiliate.address, 0, subBets2])
     ).to.be.revertedWithCustomError(betExpress, "TooFewSubbets");
   });
 
@@ -216,7 +210,7 @@ describe("BetExpress tests", function () {
     );
 
     await expect(
-      lp.connect(bettor1).bet(betExpress.address, tokens(1000), now + ONE_WEEK, [affiliate.address, subBets2])
+      lp.connect(bettor1).bet(betExpress.address, tokens(1000), now + ONE_WEEK, [affiliate.address, 0, subBets2])
     )
       .to.be.revertedWithCustomError(betExpress, "ConditionNotRunning")
       .withArgs(oracleCondId);
@@ -231,7 +225,7 @@ describe("BetExpress tests", function () {
     );
 
     await expect(
-      lp.connect(bettor1).bet(betExpress.address, tokens(1000), now + ONE_WEEK, [affiliate.address, subBets2])
+      lp.connect(bettor1).bet(betExpress.address, tokens(1000), now + ONE_WEEK, [affiliate.address, 0, subBets2])
     )
       .to.be.revertedWithCustomError(betExpress, "ConditionNotRunning")
       .withArgs(oracleCondId);
@@ -239,7 +233,7 @@ describe("BetExpress tests", function () {
 
   it("Can't make bet on a resolved condition", async () => {
     await timeShiftBy(ethers, ONE_HOUR + ONE_HOUR);
-    await core.connect(oracle).resolveCondition(oracleCondId - 2, OUTCOMEWIN);
+    await core.connect(oracle).resolveCondition(oracleCondId - 2, [OUTCOMEWIN]);
 
     const subBets2 = ethers.utils.defaultAbiCoder.encode(
       ["tuple(uint256 conditionId, uint64 outcomeId)[]"],
@@ -247,38 +241,44 @@ describe("BetExpress tests", function () {
     );
 
     await expect(
-      lp.connect(bettor1).bet(betExpress.address, tokens(1000), now + ONE_WEEK, [affiliate.address, subBets2])
+      lp.connect(bettor1).bet(betExpress.address, tokens(1000), now + ONE_WEEK, [affiliate.address, 0, subBets2])
     )
       .to.be.revertedWithCustomError(betExpress, "ConditionNotRunning")
       .withArgs(oracleCondId - 2);
   });
 
   it("Сan't make a bet if the reinforcement limit for one sub-bet condition is exceeded.", async () => {
-    let amount = tokens(40000);
+    let amount = tokens(1000);
     let subBets = ethers.utils.defaultAbiCoder.encode(
       ["tuple(uint256 conditionId, uint64 outcomeId)[]"],
       [[subBet1, subBet2, subBet3]]
     );
-    await expect(lp.connect(bettor1).bet(betExpress.address, amount, now + ONE_WEEK, [affiliate.address, subBets]))
+
+    const { conditionOdds } = await betExpress.calcOdds([subBet1, subBet2, subBet3], amount);
+    await betExpress
+      .connect(poolOwner)
+      .changeReinforcement(conditionOdds[1].sub(MULTIPLIER).mul(amount).div(MULTIPLIER).div(2));
+
+    await expect(lp.connect(bettor1).bet(betExpress.address, amount, now + ONE_WEEK, [affiliate.address, 0, subBets]))
       .to.be.revertedWithCustomError(betExpress, "TooLargeReinforcement")
       .withArgs(subBet1.conditionId);
 
-    amount = tokens(25000);
+    amount = tokens(200);
     subBets = ethers.utils.defaultAbiCoder.encode(
       ["tuple(uint256 conditionId, uint64 outcomeId)[]"],
       [[subBet1, subBet2]]
     );
-    await lp.connect(bettor1).bet(betExpress.address, amount, now + ONE_WEEK, [affiliate.address, subBets]);
+    await lp.connect(bettor1).bet(betExpress.address, amount, now + ONE_WEEK, [affiliate.address, 0, subBets]);
 
     subBets = ethers.utils.defaultAbiCoder.encode(
       ["tuple(uint256 conditionId, uint64 outcomeId)[]"],
       [[subBet3, subBet2]]
     );
-    await expect(lp.connect(bettor1).bet(betExpress.address, amount, now + ONE_WEEK, [affiliate.address, subBets]))
+    await expect(lp.connect(bettor1).bet(betExpress.address, amount, now + ONE_WEEK, [affiliate.address, 0, subBets]))
       .to.be.revertedWithCustomError(betExpress, "TooLargeReinforcement")
       .withArgs(subBet2.conditionId);
 
-    await createGame(lp, oracle, oracleGameId + 1, IPFS, now + ONE_HOUR);
+    await createGame(lp, oracle, oracleGameId + 1, now + ONE_HOUR);
     await createCondition(
       core,
       oracle,
@@ -297,74 +297,140 @@ describe("BetExpress tests", function () {
       ["tuple(uint256 conditionId, uint64 outcomeId)[]"],
       [[subBet3, subBet4]]
     );
-    await lp.connect(bettor1).bet(betExpress.address, amount, now + ONE_WEEK, [affiliate.address, subBets]);
+    await lp.connect(bettor1).bet(betExpress.address, amount, now + ONE_WEEK, [affiliate.address, 0, subBets]);
   });
 
-  it("Can't make bets if resulting sum of odds is too small", async () => {
-    const amount = tokens(1);
-
-    await createCondition(
-      core,
-      oracle,
-      oracleGameId - 2,
-      oracleCondId + 1,
-      [1, 10000000],
-      OUTCOMES,
-      reinforcement,
-      marginality
-    );
-    await createCondition(
-      core,
-      oracle,
-      oracleGameId - 1,
-      oracleCondId + 2,
-      [1, 20000000],
-      OUTCOMES,
-      reinforcement,
-      marginality
-    );
-    await createCondition(
-      core,
-      oracle,
-      oracleGameId,
-      oracleCondId + 3,
-      [1, 30000000],
-      OUTCOMES,
-      reinforcement,
-      marginality
-    );
-
-    const subBet1_ = {
-      conditionId: oracleCondId + 1,
-      outcomeId: OUTCOMEWIN,
-    };
-    const subBet2_ = {
-      conditionId: oracleCondId + 2,
-      outcomeId: OUTCOMEWIN,
-    };
-    const subBet3_ = {
-      conditionId: oracleCondId + 3,
-      outcomeId: OUTCOMEWIN,
-    };
-
-    const subBets = ethers.utils.defaultAbiCoder.encode(
+  it("Can't make a bet if resulting odds is smaller than passed minimum odds", async () => {
+    const amount = tokens(100);
+    const { expressOdds } = await betExpress.calcOdds([subBet1, subBet2, subBet3], amount);
+    let subBets = ethers.utils.defaultAbiCoder.encode(
       ["tuple(uint256 conditionId, uint64 outcomeId)[]"],
-      [[subBet1_, subBet2_, subBet3_]]
+      [[subBet1, subBet2, subBet3]]
     );
 
     await expect(
-      lp.connect(bettor1).bet(betExpress.address, amount, now + ONE_WEEK, [affiliate.address, subBets])
-    ).to.be.revertedWithCustomError(betExpress, "TooSmallOdds");
+      lp
+        .connect(bettor1)
+        .bet(betExpress.address, amount, now + ONE_WEEK, [affiliate.address, expressOdds.add(1), subBets])
+    ).to.be.revertedWithCustomError(betExpress, "SmallOdds");
+
+    subBets = ethers.utils.defaultAbiCoder.encode(
+      ["tuple(uint256 conditionId, uint64 outcomeId)[]"],
+      [[subBet1, subBet2, subBet3]]
+    );
+
+    await lp
+      .connect(bettor1)
+      .bet(betExpress.address, amount, now + ONE_WEEK, [affiliate.address, expressOdds, subBets]);
+  });
+
+  it("Can't make a bet if resulting odds exceeds the maximum odds limit", async () => {
+    const amount = tokens(100);
+    const { expressOdds } = await betExpress.calcOdds([subBet1, subBet2, subBet3], amount);
+    let subBets = ethers.utils.defaultAbiCoder.encode(
+      ["tuple(uint256 conditionId, uint64 outcomeId)[]"],
+      [[subBet1, subBet2, subBet3]]
+    );
+
+    await betExpress.connect(poolOwner).changeMaxOdds(expressOdds.sub(1));
+    await expect(
+      lp.connect(bettor1).bet(betExpress.address, amount, now + ONE_WEEK, [affiliate.address, 0, subBets])
+    ).to.be.revertedWithCustomError(betExpress, "LargeOdds");
+
+    await betExpress.connect(poolOwner).changeMaxOdds(expressOdds);
+    await lp.connect(bettor1).bet(betExpress.address, amount, now + ONE_WEEK, [affiliate.address, 0, subBets]);
+  });
+
+  it("Check calculations", async () => {
+    const pools = [
+      [1, 1],
+      [3, 2],
+      [1, 10],
+    ];
+    const marginalities = [marginality, marginality.div(2), marginality.div(3)];
+    const subBets = [];
+    for (const i of Array(3).keys()) {
+      const conditionId = oracleCondId + i + 1;
+      await createCondition(
+        core,
+        oracle,
+        oracleGameId - i,
+        conditionId,
+        pools[i],
+        OUTCOMES,
+        reinforcement,
+        marginalities[i]
+      );
+      subBets[i] = {
+        conditionId: conditionId,
+        outcomeId: OUTCOMEWIN,
+      };
+    }
+
+    const amount = tokens(100);
+    const conditions = [];
+    const reinforcements = [];
+    let expectedExpressOdds = BigNumber.from(MULTIPLIER);
+    let oddsSum = BigNumber.from(0);
+    for (const i of subBets.keys()) {
+      const condition = await core.getCondition(subBets[i].conditionId);
+      const outcomeIndex = subBets[i].outcomeId - 1;
+      const odds = (await coreTools.calcOdds(condition.virtualFunds, 0, 1))[outcomeIndex];
+      conditions[i] = condition;
+      reinforcements[i] = await betExpress.lockedReserves(subBets[i].conditionId);
+      expectedExpressOdds = expectedExpressOdds.mul(odds).div(MULTIPLIER);
+      oddsSum = oddsSum.add(odds);
+    }
+
+    const expectedConditionOdds = [];
+    const subBetAmount = expectedExpressOdds
+      .sub(MULTIPLIER)
+      .mul(amount)
+      .div(oddsSum.sub(MULTIPLIER * subBets.length));
+    expectedExpressOdds = BigNumber.from(MULTIPLIER);
+    oddsSum = BigNumber.from(0);
+    for (const i of subBets.keys()) {
+      const virtualFunds = [];
+      for (const virtualFund of conditions[i].virtualFunds) {
+        virtualFunds.push(virtualFund);
+      }
+
+      const outcomeIndex = subBets[i].outcomeId - 1;
+      virtualFunds[outcomeIndex] = virtualFunds[outcomeIndex].add(subBetAmount);
+
+      const odds = (await coreTools.calcOdds(virtualFunds, conditions[i].margin, 1))[outcomeIndex];
+      expectedExpressOdds = expectedExpressOdds.mul(odds).div(MULTIPLIER);
+      oddsSum = oddsSum.add(odds);
+      expectedConditionOdds[i] = odds;
+    }
+
+    const subBets_ = ethers.utils.defaultAbiCoder.encode(["tuple(uint256 conditionId, uint64 outcomeId)[]"], [subBets]);
+    const { conditionOdds, expressOdds } = await betExpress.calcOdds(subBets, amount);
+    await lp.connect(bettor1).bet(betExpress.address, amount, now + ONE_WEEK, [affiliate.address, 0, subBets_]);
+
+    const newBet = await betExpress.getBet(1);
+    expect(expressOdds).to.be.equal(expectedExpressOdds);
+    expect(newBet.odds).to.be.equal(expressOdds);
+
+    const deltaPayout = newBet.odds.mul(amount).div(MULTIPLIER).sub(amount);
+    for (const i of subBets.keys()) {
+      expect(conditionOdds[i]).to.be.equal(expectedConditionOdds[i]);
+      expect(newBet.conditionOdds[i]).to.be.equal(conditionOdds[i]);
+      expect(await betExpress.lockedReserves(subBets[i].conditionId)).to.be.equal(
+        reinforcements[i].add(
+          deltaPayout.mul(expectedConditionOdds[i].sub(MULTIPLIER)).div(oddsSum.sub(MULTIPLIER * subBets.length))
+        )
+      );
+    }
   });
 
   context("Express bet with 3 subbets", () => {
     let newBet;
-    let lpBefore, lockedBefore, balanceBefore, balanceAffBefore, balanceDaoBefore, balanceDataProviderBefore;
+    let lpBefore, lockedBefore, balanceBefore, balanceDaoBefore, balanceDataProviderBefore;
 
     beforeEach(async () => {
       lpBefore = await lp.getReserve();
       balanceBefore = await wxDAI.balanceOf(bettor1.address);
-      balanceAffBefore = await wxDAI.balanceOf(affiliate.address);
       balanceDaoBefore = await wxDAI.balanceOf(factoryOwner.address);
       balanceDataProviderBefore = await wxDAI.balanceOf(dataProvider.address);
 
@@ -381,7 +447,7 @@ describe("BetExpress tests", function () {
         [[subBet1, subBet2, subBet3]]
       );
 
-      await lp.connect(bettor1).bet(betExpress.address, amount, now + ONE_WEEK, [affiliate.address, subBets]);
+      await lp.connect(bettor1).bet(betExpress.address, amount, now + ONE_WEEK, [affiliate.address, 0, subBets]);
       newBet = await betExpress.getBet(1);
     }
 
@@ -389,57 +455,50 @@ describe("BetExpress tests", function () {
 
     it("Bettor wins if all subbets win and takes all payout", async () => {
       const balanceBefore = await wxDAI.balanceOf(bettor1.address);
-      const balanceAffBefore = await wxDAI.balanceOf(affiliate.address);
       const balanceDaoBefore = await wxDAI.balanceOf(factoryOwner.address);
       const balanceDataProviderBefore = await wxDAI.balanceOf(dataProvider.address);
 
-      await core.connect(oracle).resolveCondition(oracleCondId - 2, OUTCOMEWIN);
-      await core.connect(oracle).resolveCondition(oracleCondId - 1, OUTCOMEWIN);
-      await core.connect(oracle).resolveCondition(oracleCondId, OUTCOMEWIN);
+      await core.connect(oracle).resolveCondition(oracleCondId - 2, [OUTCOMEWIN]);
+      await core.connect(oracle).resolveCondition(oracleCondId - 1, [OUTCOMEWIN]);
+      await core.connect(oracle).resolveCondition(oracleCondId, [OUTCOMEWIN]);
 
       const payout = newBet.odds.mul(newBet.amount).div(MULTIPLIER);
 
       expect(await lp.lockedLiquidity()).to.be.eq(lockedBefore.add(payout.sub(newBet.amount)));
       expect(await lp.connect(bettor1).viewPayout(betExpress.address, 1)).to.be.eq(payout);
-      await lp.connect(bettor1).withdrawPayout(betExpress.address, 1, false);
-      await lp.claimAffiliateRewardFor(betExpress.address, ethers.utils.arrayify(0), affiliate.address);
+      await lp.connect(bettor1).withdrawPayout(betExpress.address, 1);
       await lp.connect(factoryOwner).claimReward();
       await lp.connect(dataProvider).claimReward();
 
       expect(await lp.getReserve()).to.be.eq(lpBefore.sub(payout.sub(newBet.amount)));
       expect(await lp.lockedLiquidity()).to.be.eq(lockedBefore);
       expect(await wxDAI.balanceOf(bettor1.address)).to.be.eq(balanceBefore.add(payout));
-      expect(await wxDAI.balanceOf(affiliate.address)).to.be.eq(balanceAffBefore);
       expect(await wxDAI.balanceOf(factoryOwner.address)).to.be.eq(balanceDaoBefore);
       expect(await wxDAI.balanceOf(dataProvider.address)).to.be.eq(balanceDataProviderBefore);
 
-      await expect(lp.connect(bettor1).withdrawPayout(betExpress.address, 1, false)).to.be.revertedWithCustomError(
+      await expect(lp.connect(bettor1).withdrawPayout(betExpress.address, 1)).to.be.revertedWithCustomError(
         betExpress,
-        "AlreadyResolved"
+        "AlreadyPaid"
       );
     });
 
     it("Bettor loses if any subbet loses", async () => {
-      await core.connect(oracle).resolveCondition(oracleCondId - 2, OUTCOMELOSE);
-      await core.connect(oracle).resolveCondition(oracleCondId - 1, OUTCOMEWIN);
-      await core.connect(oracle).resolveCondition(oracleCondId, OUTCOMEWIN);
+      await core.connect(oracle).resolveCondition(oracleCondId - 2, [OUTCOMELOSE]);
+      await core.connect(oracle).resolveCondition(oracleCondId - 1, [OUTCOMEWIN]);
+      await core.connect(oracle).resolveCondition(oracleCondId, [OUTCOMEWIN]);
 
       const payout = 0;
 
       expect(await lp.connect(bettor1).viewPayout(betExpress.address, 1)).to.be.eq(payout);
-      await lp.connect(bettor1).withdrawPayout(betExpress.address, 1, false);
-      await lp.claimAffiliateRewardFor(betExpress.address, ethers.utils.arrayify(0), affiliate.address);
+      await lp.connect(bettor1).withdrawPayout(betExpress.address, 1);
       await lp.connect(factoryOwner).claimReward();
       await lp.connect(dataProvider).claimReward();
 
       expect(await lp.getReserve()).to.be.eq(
-        lpBefore.add(newBet.amount.mul(MULTIPLIER - (affiliateFee + daoFee + oracleFee)).div(MULTIPLIER))
+        lpBefore.add(newBet.amount.mul(MULTIPLIER - (daoFee + oracleFee)).div(MULTIPLIER))
       );
       expect(await lp.lockedLiquidity()).to.be.eq(lockedBefore);
       expect(await wxDAI.balanceOf(bettor1.address)).to.be.eq(balanceBefore);
-      expect(await wxDAI.balanceOf(affiliate.address)).to.be.eq(
-        balanceAffBefore.add(newBet.amount.mul(affiliateFee).div(MULTIPLIER))
-      );
       expect(await wxDAI.balanceOf(factoryOwner.address)).to.be.eq(
         balanceDaoBefore.add(newBet.amount.mul(daoFee).div(MULTIPLIER))
       );
@@ -449,7 +508,7 @@ describe("BetExpress tests", function () {
     });
 
     it("Bettor wins, but payout is decreased, if any condition or game is canceled", async () => {
-      await core.connect(oracle).resolveCondition(oracleCondId - 2, OUTCOMEWIN);
+      await core.connect(oracle).resolveCondition(oracleCondId - 2, [OUTCOMEWIN]);
       await core.connect(oracle).cancelCondition(oracleCondId - 1);
       await lp.connect(oracle).cancelGame(oracleGameId);
 
@@ -457,15 +516,13 @@ describe("BetExpress tests", function () {
       const payout = newBet.amount.mul(winningOdds).div(MULTIPLIER);
 
       expect(await lp.connect(bettor1).viewPayout(betExpress.address, 1)).to.be.eq(payout);
-      await lp.connect(bettor1).withdrawPayout(betExpress.address, 1, false);
-      await lp.claimAffiliateRewardFor(betExpress.address, ethers.utils.arrayify(0), affiliate.address);
+      await lp.connect(bettor1).withdrawPayout(betExpress.address, 1);
       await lp.connect(factoryOwner).claimReward();
       await lp.connect(dataProvider).claimReward();
 
       expect(await lp.getReserve()).to.be.eq(lpBefore.sub(payout.sub(newBet.amount)));
       expect(await lp.lockedLiquidity()).to.be.eq(lockedBefore);
       expect(await wxDAI.balanceOf(bettor1.address)).to.be.eq(balanceBefore.add(payout));
-      expect(await wxDAI.balanceOf(affiliate.address)).to.be.eq(balanceAffBefore);
       expect(await wxDAI.balanceOf(factoryOwner.address)).to.be.eq(balanceDaoBefore);
       expect(await wxDAI.balanceOf(dataProvider.address)).to.be.eq(balanceDataProviderBefore);
     });
@@ -478,21 +535,19 @@ describe("BetExpress tests", function () {
       const payout = newBet.amount;
 
       expect(await lp.connect(bettor1).viewPayout(betExpress.address, 1)).to.be.eq(payout);
-      await lp.connect(bettor1).withdrawPayout(betExpress.address, 1, false);
-      await lp.claimAffiliateRewardFor(betExpress.address, ethers.utils.arrayify(0), affiliate.address);
+      await lp.connect(bettor1).withdrawPayout(betExpress.address, 1);
       await lp.connect(factoryOwner).claimReward();
       await lp.connect(dataProvider).claimReward();
 
       expect(await lp.getReserve()).to.be.eq(lpBefore);
       expect(await lp.lockedLiquidity()).to.be.eq(lockedBefore);
       expect(await wxDAI.balanceOf(bettor1.address)).to.be.eq(balanceBefore.add(payout));
-      expect(await wxDAI.balanceOf(affiliate.address)).to.be.eq(balanceAffBefore);
       expect(await wxDAI.balanceOf(factoryOwner.address)).to.be.eq(balanceDaoBefore);
       expect(await wxDAI.balanceOf(dataProvider.address)).to.be.eq(balanceDataProviderBefore);
     });
 
     it("Can't resolve bet payout if any condition is not finished", async () => {
-      await core.connect(oracle).resolveCondition(oracleCondId - 2, OUTCOMEWIN);
+      await core.connect(oracle).resolveCondition(oracleCondId - 2, [OUTCOMEWIN]);
       await core.connect(oracle).cancelCondition(oracleCondId - 1);
       await core.connect(maintainer).stopCondition(oracleCondId, true); // not finished
 
@@ -500,16 +555,41 @@ describe("BetExpress tests", function () {
         betExpress,
         "ConditionNotFinished"
       );
-      await expect(lp.connect(bettor1).withdrawPayout(betExpress.address, 1, false)).to.be.revertedWithCustomError(
+      await expect(betExpress.calcPayout(1)).to.be.revertedWithCustomError(betExpress, "ConditionNotFinished");
+      await expect(lp.connect(bettor1).withdrawPayout(betExpress.address, 1)).to.be.revertedWithCustomError(
         betExpress,
         "ConditionNotFinished"
       );
     });
 
+    it("Can calculate bet payout even if it is withdrawn", async () => {
+      await core.connect(oracle).resolveCondition(oracleCondId - 2, [OUTCOMEWIN]);
+      await core.connect(oracle).resolveCondition(oracleCondId - 1, [OUTCOMEWIN]);
+      await core.connect(oracle).resolveCondition(oracleCondId, [OUTCOMEWIN]);
+
+      const payout = newBet.odds.mul(newBet.amount).div(MULTIPLIER);
+
+      expect(await lp.lockedLiquidity()).to.be.eq(lockedBefore.add(payout.sub(newBet.amount)));
+      expect(await lp.connect(bettor1).viewPayout(betExpress.address, 1)).to.be.eq(payout);
+      expect(await betExpress.calcPayout(1)).to.be.eq(payout);
+
+      await lp.connect(bettor1).withdrawPayout(betExpress.address, 1);
+
+      await expect(lp.connect(bettor1).withdrawPayout(betExpress.address, 1)).to.be.revertedWithCustomError(
+        betExpress,
+        "AlreadyPaid"
+      );
+      await expect(lp.connect(bettor1).viewPayout(betExpress.address, 1)).to.be.revertedWithCustomError(
+        betExpress,
+        "AlreadyPaid"
+      );
+      expect(await betExpress.calcPayout(1)).to.be.eq(payout);
+    });
+
     it("Payout is resolved if condition is resolved, even though its game is canceled", async () => {
-      await core.connect(oracle).resolveCondition(oracleCondId - 2, OUTCOMEWIN);
-      await core.connect(oracle).resolveCondition(oracleCondId - 1, OUTCOMEWIN);
-      await core.connect(oracle).resolveCondition(oracleCondId, OUTCOMEWIN);
+      await core.connect(oracle).resolveCondition(oracleCondId - 2, [OUTCOMEWIN]);
+      await core.connect(oracle).resolveCondition(oracleCondId - 1, [OUTCOMEWIN]);
+      await core.connect(oracle).resolveCondition(oracleCondId, [OUTCOMEWIN]);
 
       await lp.connect(oracle).cancelGame(oracleGameId);
       await lp.connect(oracle).cancelGame(oracleGameId - 2);
@@ -517,21 +597,19 @@ describe("BetExpress tests", function () {
       const payout = newBet.odds.mul(newBet.amount).div(MULTIPLIER);
 
       expect(await lp.connect(bettor1).viewPayout(betExpress.address, 1)).to.be.eq(payout);
-      await lp.connect(bettor1).withdrawPayout(betExpress.address, 1, false);
-      await lp.claimAffiliateRewardFor(betExpress.address, ethers.utils.arrayify(0), affiliate.address);
+      await lp.connect(bettor1).withdrawPayout(betExpress.address, 1);
       await lp.connect(factoryOwner).claimReward();
       await lp.connect(dataProvider).claimReward();
 
       expect(await lp.getReserve()).to.be.eq(lpBefore.sub(payout.sub(newBet.amount)));
       expect(await lp.lockedLiquidity()).to.be.eq(lockedBefore);
       expect(await wxDAI.balanceOf(bettor1.address)).to.be.eq(balanceBefore.add(payout));
-      expect(await wxDAI.balanceOf(affiliate.address)).to.be.eq(balanceAffBefore);
       expect(await wxDAI.balanceOf(factoryOwner.address)).to.be.eq(balanceDaoBefore);
       expect(await wxDAI.balanceOf(dataProvider.address)).to.be.eq(balanceDataProviderBefore);
 
-      await expect(lp.connect(bettor1).withdrawPayout(betExpress.address, 1, false)).to.be.revertedWithCustomError(
+      await expect(lp.connect(bettor1).withdrawPayout(betExpress.address, 1)).to.be.revertedWithCustomError(
         betExpress,
-        "AlreadyResolved"
+        "AlreadyPaid"
       );
     });
   });

@@ -138,7 +138,7 @@ contract AzuroBet is OwnableUpgradeable, ERC721Upgradeable, IAzuroBet {
         if (count > maxCount) count = maxCount;
 
         tokenIds = new uint256[](count);
-        for (uint256 i = 0; i < count; i++) {
+        for (uint256 i = 0; i < count; ++i) {
             tokenIds[i] = _ownedTokens[owner_][start + i];
         }
     }

@@ -15,19 +15,12 @@ interface IProxyFront {
     struct WithdrawPayoutData {
         address core;
         uint256 tokenId;
+        bool isNative;
     }
 
     error IncorrectValue();
 
-    function bet(
-        address lp,
-        BetData[] calldata data,
-        bool isNative
-    ) external payable;
+    function bet(address lp, BetData[] calldata data) external payable;
 
-    function withdrawPayouts(
-        address lp,
-        WithdrawPayoutData[] calldata data,
-        bool isNative
-    ) external;
+    function withdrawPayouts(WithdrawPayoutData[] calldata data) external;
 }

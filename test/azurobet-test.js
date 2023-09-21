@@ -15,7 +15,6 @@ const LIQUIDITY = tokens(2000000);
 const ONE_HOUR = 3600;
 const OUTCOMEWIN = 1;
 const OUTCOMELOSE = 2;
-const IPFS = ethers.utils.formatBytes32String("ipfs");
 
 const URI = "https://smth.com";
 
@@ -26,7 +25,6 @@ describe("AzuroBet test", function () {
   const minDepo = tokens(10);
   const daoFee = MULTIPLIER * 0.09; // 9%
   const dataProviderFee = MULTIPLIER * 0.01; // 1%
-  const affiliateFee = MULTIPLIER * 0.33; // 33%
 
   const pool1 = 5000000;
   const pool2 = 5000000;
@@ -52,7 +50,6 @@ describe("AzuroBet test", function () {
       minDepo,
       daoFee,
       dataProviderFee,
-      affiliateFee,
       LIQUIDITY
     ));
     await prepareAccess(access, poolOwner, oracle.address, oracle2.address, maintainer.address, roleIds);
@@ -69,7 +66,7 @@ describe("AzuroBet test", function () {
   });
   it("Get all tokens owned by owner", async () => {
     time = await getBlockTime(ethers);
-    await createGame(lp, oracle, ++gameId, IPFS, time + ONE_HOUR);
+    await createGame(lp, oracle, ++gameId, time + ONE_HOUR);
 
     await createCondition(
       core,
@@ -102,7 +99,7 @@ describe("AzuroBet test", function () {
   });
   it("Get tokens owned by owner in several parts", async () => {
     time = await getBlockTime(ethers);
-    await createGame(lp, oracle, ++gameId, IPFS, time + ONE_HOUR);
+    await createGame(lp, oracle, ++gameId, time + ONE_HOUR);
 
     await createCondition(
       core,

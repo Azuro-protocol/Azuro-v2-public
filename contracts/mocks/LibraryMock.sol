@@ -5,20 +5,11 @@ pragma solidity ^0.8.9;
 import "../libraries/CoreTools.sol";
 
 contract LibraryMock {
-    function marginAdjustedOdds(uint256 odds, uint256 margin)
-        external
-        pure
-        returns (uint256)
-    {
-        return CoreTools.marginAdjustedOdds(odds, margin);
-    }
-
     function calcOdds(
-        uint128[2] memory funds,
-        uint128 amount,
-        uint256 outcomeIndex,
-        uint256 margin
-    ) external pure returns (uint256) {
-        return CoreTools.calcOdds(funds, amount, outcomeIndex, margin);
+        uint128[] memory funds,
+        uint256 margin,
+        uint256 winningOutcomesCount
+    ) external pure returns (uint256[] memory) {
+        return CoreTools.calcOdds(funds, margin, winningOutcomesCount);
     }
 }

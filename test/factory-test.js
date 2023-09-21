@@ -1,6 +1,7 @@
 const { expect } = require("chai");
 const { ethers } = require("hardhat");
 const {
+  addLiquidity,
   getBlockTime,
   tokens,
   createCondition,
@@ -10,7 +11,6 @@ const {
   timeShift,
   getPluggedCore,
   getCreatePoolDetails,
-  getClaimParamsDef,
   deployContracts,
   createFactory,
   createPool,
@@ -23,7 +23,6 @@ const { MULTIPLIER } = require("../utils/constants");
 const LIQUIDITY = tokens(200000);
 const OUTCOMEWIN = 1;
 const OUTCOMELOSE = 2;
-const IPFS = ethers.utils.formatBytes32String("ipfs");
 
 const ONE_HOUR = 3600;
 const ONE_MINUTE = 60;
@@ -35,7 +34,6 @@ describe("Pool Factory test", function () {
   const minDepo = tokens(10);
   const daoFee = MULTIPLIER * 0.09; // 9%
   const dataProviderFee = MULTIPLIER * 0.01; // 1%
-  const affiliateFee = MULTIPLIER * 0.33; // 33%
 
   const pool1 = 5000000;
   const pool2 = 5000000;
@@ -45,7 +43,7 @@ describe("Pool Factory test", function () {
 
   let dao, poolOwner, dataProvider, oracle, oracle2, maintainer, affiliate, affiliate2, bettor;
   let Access, LP, PrematchCore, WXDAI;
-  let factory, beaconAccess, beaconLP, beaconPrematchCore, beaconAzuroBet, access, core, affiliateHelper, wxDAI, lp;
+  let factory, beaconAccess, beaconLP, beaconPrematchCore, beaconAzuroBet, access, core, wxDAI, lp;
   let time;
 
   let gameId = 0;
@@ -56,7 +54,7 @@ describe("Pool Factory test", function () {
       await ethers.getSigners();
 
     const contracts = await deployContracts(ethers, dao);
-    ({ beaconAccess, beaconLP, beaconPrematchCore, beaconAzuroBet, affiliateHelper } = contracts);
+    ({ beaconAccess, beaconLP, beaconPrematchCore, beaconAzuroBet } = contracts);
 
     WXDAI = await ethers.getContractFactory("WETH9");
     wxDAI = await WXDAI.deploy();
@@ -69,19 +67,24 @@ describe("Pool Factory test", function () {
 
     PrematchCore = await ethers.getContractFactory("PrematchCore", {
       signer: poolOwner,
-      libraries: {
-        AffiliateHelper: affiliateHelper.address,
-      },
       unsafeAllowCustomTypes: true,
     });
 
-    factory = await createFactory(ethers, dao, beaconAccess, beaconLP, beaconPrematchCore, contracts.beaconAzuroBet);
+    factory = await createFactory(
+      ethers,
+      dao,
+      beaconAccess,
+      beaconLP,
+      beaconPrematchCore,
+      contracts.beaconLiveCore,
+      contracts.beaconAzuroBet
+    );
   });
   it("Create new pool", async () => {
     // Create pool
     const txCreatePool = await factory
       .connect(poolOwner)
-      .createPool(wxDAI.address, minDepo, daoFee, dataProviderFee, affiliateFee, "pre-match");
+      .createPool(wxDAI.address, minDepo, daoFee, dataProviderFee, "pre-match");
 
     const txDetails = await getCreatePoolDetails(txCreatePool);
 
@@ -99,10 +102,10 @@ describe("Pool Factory test", function () {
 
     // Test created pool
     await wxDAI.connect(bettor).approve(lp.address, approveAmount);
-    await lp.connect(bettor).addLiquidity(LIQUIDITY);
+    await addLiquidity(lp, bettor, LIQUIDITY);
 
     time = await getBlockTime(ethers);
-    await createGame(lp, oracle, ++gameId, IPFS, time + ONE_HOUR);
+    await createGame(lp, oracle, ++gameId, time + ONE_HOUR);
 
     await createCondition(
       core,
@@ -132,13 +135,13 @@ describe("Pool Factory test", function () {
     await expect(switchCore(lp, core, bettor, false)).to.be.revertedWith("Ownable: account is not the owner");
 
     await timeShift(time + ONE_HOUR + ONE_MINUTE);
-    await core.connect(oracle).resolveCondition(condId, OUTCOMEWIN);
+    await core.connect(oracle).resolveCondition(condId, [OUTCOMEWIN]);
 
     await makeWithdrawPayout(lp, core, bettor, tokenId);
     await switchCore(lp, core, poolOwner, false);
 
     time = await getBlockTime(ethers);
-    await createGame(lp, oracle, ++gameId, IPFS, time + ONE_HOUR);
+    await createGame(lp, oracle, ++gameId, time + ONE_HOUR);
 
     await expect(
       createCondition(
@@ -158,38 +161,27 @@ describe("Pool Factory test", function () {
     const { core, lp } = await createPool(
       ethers,
       factory,
-      affiliateHelper,
       poolOwner,
       wxDAI.address,
       minDepo,
       daoFee,
       dataProviderFee,
-      affiliateFee,
       oracle.address
     );
 
     const pool2 = await createPool(
       ethers,
       factory,
-      affiliateHelper,
       poolOwner,
       wxDAI.address,
       minDepo,
       daoFee,
       dataProviderFee,
-      affiliateFee,
       oracle.address
     );
 
     await expect(switchCore(lp, pool2.core, poolOwner, false)).to.be.revertedWithCustomError(lp, "UnknownCore");
     await expect(switchCore(pool2.lp, core, poolOwner, false)).to.be.revertedWithCustomError(lp, "UnknownCore");
-
-    await expect(
-      lp.claimAffiliateRewardFor(pool2.core.address, getClaimParamsDef(), poolOwner.address)
-    ).to.be.revertedWithCustomError(lp, "UnknownCore");
-    await expect(
-      pool2.lp.claimAffiliateRewardFor(core.address, getClaimParamsDef(), poolOwner.address)
-    ).to.be.revertedWithCustomError(lp, "UnknownCore");
 
     await expect(
       lp.connect(poolOwner).updateCoreSettings(pool2.core.address, 1, MULTIPLIER, tokens(1))
@@ -206,13 +198,11 @@ describe("Pool Factory test", function () {
     ({ access, core, lp } = await createPool(
       ethers,
       factory,
-      affiliateHelper,
       poolOwner,
       wxDAI.address,
       minDepo,
       daoFee,
       dataProviderFee,
-      affiliateFee,
       oracle.address
     ));
 
@@ -253,5 +243,32 @@ describe("Pool Factory test", function () {
       factory,
       "UnknownCoreType"
     );
+  });
+  it.skip("Upgrade pool beacon contracts", async () => {
+    // Create pool
+    ({ access, core, lp } = await createPool(
+      ethers,
+      factory,
+      poolOwner,
+      wxDAI.address,
+      minDepo,
+      daoFee,
+      dataProviderFee,
+      oracle.address
+    ));
+
+    // Upgrade contracts
+    const newLP = await ethers.getContractFactory("LP", { signer: dao });
+    const newCore = await ethers.getContractFactory("LiveCore", {
+      signer: dao,
+      unsafeAllowCustomTypes: true,
+    });
+
+    await upgrades.upgradeBeacon(beaconLP.address, newLP);
+    await upgrades.upgradeBeacon(beaconPrematchCore.address, newCore, { unsafeAllowLinkedLibraries: true });
+
+    // Test upgraded contracts
+    expect(await lp.cores(core.address)).to.be.equals(1); // ACTIVE
+    expect(await core.lp()).to.be.equals(lp.address);
   });
 });

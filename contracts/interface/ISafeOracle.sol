@@ -67,10 +67,11 @@ interface ISafeOracle {
         address core,
         uint256 gameId,
         uint256 conditionId,
-        uint64[2] calldata odds,
-        uint64[2] calldata outcomes,
+        uint256[] calldata odds,
+        uint64[] calldata outcomes,
         uint128 reinforcement,
         uint64 margin,
+        uint8 winningOutcomesCount,
         uint64 proposeDeadline
     ) external;
 
@@ -81,7 +82,7 @@ interface ISafeOracle {
     function resolveCondition(
         address core,
         uint256 conditionId,
-        uint64 outcomeWin
+        uint64[] calldata winningOutcomes
     ) external;
 
     function dispute(address core, uint256 conditionId) external;

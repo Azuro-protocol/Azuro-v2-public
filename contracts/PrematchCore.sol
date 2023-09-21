@@ -9,7 +9,7 @@ import "./utils/OwnableUpgradeable.sol";
 
 /// @title Azuro internal core managing pre-match conditions and processing bets on them
 contract PrematchCore is CoreBase, IPrematchCore {
-    using FixedMath for uint64;
+    using FixedMath for *;
     using SafeCast for uint256;
 
     /**
@@ -18,10 +18,11 @@ contract PrematchCore is CoreBase, IPrematchCore {
     function createCondition(
         uint256 gameId,
         uint256 conditionId,
-        uint64[2] calldata odds,
-        uint64[2] calldata outcomes,
+        uint256[] calldata odds,
+        uint64[] calldata outcomes,
         uint128 reinforcement,
-        uint64 margin
+        uint64 margin,
+        uint8 winningOutcomesCount
     ) external override restricted(this.createCondition.selector) {
         _createCondition(
             gameId,
@@ -29,14 +30,15 @@ contract PrematchCore is CoreBase, IPrematchCore {
             odds,
             outcomes,
             reinforcement,
-            margin
+            margin,
+            winningOutcomesCount
         );
         if (lp.addCondition(gameId) <= block.timestamp)
             revert GameAlreadyStarted();
     }
 
     /**
-     * @notice Liquidity Pool: See {ICoreBase-putBet}.
+     * @notice Liquidity Pool: See {IBet-putBet}.
      */
     function putBet(
         address bettor,
@@ -47,39 +49,45 @@ contract PrematchCore is CoreBase, IPrematchCore {
         Condition storage condition = _getCondition(data.conditionId);
         _conditionIsRunning(condition);
 
-        uint256 outcomeIndex = _getOutcomeIndex(condition, data.outcomeId);
+        uint256 outcomeIndex = getOutcomeIndex(
+            data.conditionId,
+            data.outcomeId
+        );
 
-        uint128[2] memory virtualFunds = condition.virtualFunds;
+        uint128[] memory virtualFunds = condition.virtualFunds;
+        virtualFunds[outcomeIndex] += amount;
+
         uint64 odds = CoreTools
-            .calcOdds(virtualFunds, amount, outcomeIndex, condition.margin)
-            .toUint64();
-        if (odds < data.minOdds) revert SmallOdds();
+        .calcOdds(
+            virtualFunds,
+            condition.margin,
+            condition.winningOutcomesCount
+        )[outcomeIndex].toUint64();
+        if (odds < betData.minOdds) revert CoreTools.IncorrectOdds();
 
         uint128 payout = odds.mul(amount).toUint128();
-        uint128 deltaPayout = payout - amount;
-
-        virtualFunds[outcomeIndex] += amount;
-        virtualFunds[1 - outcomeIndex] -= deltaPayout;
-        condition.virtualFunds = virtualFunds;
-
         {
-            uint128[2] memory funds = condition.funds;
-            _changeFunds(
-                condition,
-                funds,
-                outcomeIndex == 0
-                    ? [funds[0] + amount, funds[1] - deltaPayout]
-                    : [funds[0] - deltaPayout, funds[1] + amount]
-            );
+            uint256 virtualFund = Math.sum(virtualFunds);
+            uint256 oppositeVirtualFund = virtualFund -
+                virtualFunds[outcomeIndex];
+            uint256 deltaPayout = payout - amount;
+            uint256 length = virtualFunds.length;
+            for (uint256 i = 0; i < length; ++i) {
+                if (i != outcomeIndex) {
+                    virtualFunds[i] -= uint128(
+                        (deltaPayout * virtualFunds[i]) / oppositeVirtualFund
+                    );
+                    CoreTools.calcProbability(
+                        virtualFunds[i],
+                        virtualFund,
+                        condition.winningOutcomesCount
+                    );
+                }
+            }
         }
 
-        _updateContribution(
-            betData.affiliate,
-            data.conditionId,
-            amount,
-            payout,
-            outcomeIndex
-        );
+        condition.virtualFunds = virtualFunds;
+        _changeFunds(condition, outcomeIndex, amount, payout);
 
         tokenId = azuroBet.mint(bettor);
         {
@@ -104,13 +112,48 @@ contract PrematchCore is CoreBase, IPrematchCore {
 
     /**
      * @notice Indicate outcome `outcomeWin` as happened in condition `conditionId`.
-     * @notice See {CoreBase-_resolveCondition}.
+     * @notice Only condition creator can resolve it.
+     * @param  conditionId the match or condition ID
+     * @param  winningOutcomes_ the IDs of the winning outcomes of the condition
      */
-    function resolveCondition(uint256 conditionId, uint64 outcomeWin)
-        external
-        override
-    {
-        _resolveCondition(conditionId, outcomeWin);
+    function resolveCondition(
+        uint256 conditionId,
+        uint64[] calldata winningOutcomes_
+    ) external override {
+        Condition storage condition = _getCondition(conditionId);
+        if (winningOutcomes_.length != condition.winningOutcomesCount)
+            revert IncorrectWinningOutcomesCount();
+
+        address oracle = condition.oracle;
+        if (msg.sender != oracle) revert OnlyOracle(oracle);
+        {
+            (uint64 timeOut, bool gameIsCanceled) = lp.getGameInfo(
+                condition.gameId
+            );
+            if (
+                /// TODO: Use only `_isConditionCanceled` to check if condition or its game is canceled
+                gameIsCanceled ||
+                condition.state == ConditionState.CANCELED ||
+                _isConditionResolved(condition)
+            ) revert ConditionAlreadyResolved();
+
+            timeOut += 1 minutes;
+            if (block.timestamp < timeOut) revert ResolveTooEarly(timeOut);
+        }
+
+        uint128 payout;
+        for (uint256 i = 0; i < winningOutcomes_.length; ++i) {
+            payout += condition.payouts[
+                getOutcomeIndex(conditionId, winningOutcomes_[i])
+            ];
+        }
+        _resolveCondition(
+            condition,
+            conditionId,
+            ConditionState.RESOLVED,
+            winningOutcomes_,
+            payout
+        );
     }
 
     /**
@@ -125,6 +168,8 @@ contract PrematchCore is CoreBase, IPrematchCore {
         onlyLp
         returns (address, uint128)
     {
-        return _resolvePayout(tokenId);
+        uint128 payout = viewPayout(tokenId);
+        bets[tokenId].isPaid = true;
+        return (azuroBet.ownerOf(tokenId), payout);
     }
 }

@@ -34,32 +34,21 @@ async function main() {
   await timeout();
 
   // silence linked library proxy deploy warning:
-  // Warning: Potentially unsafe deployment of PrematchCore
+  // Warning: Potentially unsafe deployment of LiveCore
   //  You are using the `unsafeAllow.external-library-linking` flag to include external libraries.
   //  Make sure you have manually checked that the linked libraries are upgrade safe.
   upgrades.silenceWarnings();
-
-  // Affiliate helper library
-  console.log("deploy AffiliateHelper...");
-  const AffiliateHelper = await ethers.getContractFactory("AffiliateHelper");
-  const affiliateHelper = await AffiliateHelper.deploy();
-  await affiliateHelper.deployed();
-  await timeout();
 
   // Pre-match core beacon
   console.log("deploy beacon PrematchCore...");
   const PrematchCore = await ethers.getContractFactory("PrematchCore", {
     signer: deployer,
-    libraries: {
-      AffiliateHelper: affiliateHelper.address,
-    },
     unsafeAllowCustomTypes: true,
   });
   const beaconPrematchCore = await upgrades.deployBeacon(PrematchCore, { unsafeAllowLinkedLibraries: true });
   await beaconPrematchCore.deployed();
   await timeout();
 
-  console.log("* Libraries *\nAffiliateHelper:", affiliateHelper.address);
   console.log(
     "\n* Beacons *\nAccess:",
     beaconAccess.address,
@@ -127,12 +116,6 @@ async function main() {
     try {
       await hre.run("verify:verify", {
         address: await beaconAzuroBet.implementation(),
-        constructorArguments: [],
-      });
-    } catch (err) {}
-    try {
-      await hre.run("verify:verify", {
-        address: affiliateHelper.address,
         constructorArguments: [],
       });
     } catch (err) {}

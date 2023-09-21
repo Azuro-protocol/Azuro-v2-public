@@ -1,53 +1,92 @@
+const hre = require("hardhat");
 const { ethers, network } = require("hardhat");
-const { getTimeout } = require("../utils/utils");
-const { Wallet } = require("ethers");
+const { addRole, bindRoles, getTimeout, grantRole } = require("../utils/utils");
 
-let wxDaiAddress;
+const LP_ADDRESS = process.env.LP_ADDRESS;
+const FREEBET_AFFILIATE = process.env.FREEBET_AFFILIATE;
+const FREEBET_MANAGER = process.env.FREEBET_MANAGER;
 
 async function main() {
   const chainId = await network.provider.send("eth_chainId");
   const timeout = getTimeout(chainId);
+
+  const Access = await ethers.getContractFactory("Access");
+  const access = await upgrades.deployProxy(Access);
+
+  await timeout();
+
+  const FreeBetFactory = await ethers.getContractFactory("FreeBetFactory");
+  const freeBetFactory = await upgrades.deployProxy(FreeBetFactory, [access.address]);
+
+  await timeout();
+
+  const freeBetBeaconAddress = await freeBetFactory.freeBetBeacon();
+  const UpgradeableBeacon = await ethers.getContractFactory("UpgradeableBeacon");
+  const freeBetBeacon = await UpgradeableBeacon.attach(freeBetBeaconAddress);
+  const freeBetImplementationAddress = await freeBetBeacon.implementation();
+
+  console.log("* FreeBet *");
+  console.log("\nACCESS:", access.address);
+  console.log("FREEBET_FACTORY:", freeBetFactory.address);
+  console.log("FREEBET_BEACON:", freeBetBeaconAddress);
+  console.log("FREEBET_IMPLEMENTATION:", freeBetImplementationAddress);
+
   const [deployer] = await ethers.getSigners();
-  const MAINTAINERS = JSON.parse(process.env.MAINTAINERS ?? "[]");
 
-  let freebet;
-  const LP_ADDRESS = process.env.LP_ADDRESS;
+  const roleId = await addRole(access, deployer, "FreeBet Deployer");
+  await bindRoles(access, deployer, [
+    {
+      target: freeBetFactory.address,
+      selector: "0x04209123",
+      roleId: roleId,
+    },
+  ]);
+  await grantRole(access, deployer, deployer.address, roleId);
 
-  console.log("Deployer wallet: ", deployer.address);
-  console.log("Deployer balance:", (await deployer.getBalance()).toString());
+  const txCreateFreeBet = await freeBetFactory
+    .connect(deployer)
+    .createFreeBet(LP_ADDRESS, "XYZFreeBet", "XFBET", FREEBET_AFFILIATE, FREEBET_MANAGER);
+  const receipt = await txCreateFreeBet.wait();
+  const iface = new ethers.utils.Interface(
+    freeBetFactory.interface.format(ethers.utils.FormatTypes.full).filter((x) => {
+      return x.includes("NewFreeBet");
+    })
+  );
+  const log = iface.parseLog(receipt.logs[4]);
 
-  // xDAI
-  {
-    wxDaiAddress = process.env.TOKEN_ADDRESS;
-  }
+  console.log("\nFREEBET:", log.args.freeBetAddress);
+  console.log("FREEBET MANAGER:", FREEBET_MANAGER);
 
-  // Freebet
-  {
-    const FreeBet = await ethers.getContractFactory("FreeBet");
-    freebet = await upgrades.deployProxy(FreeBet, [wxDaiAddress], { useDeployedImplementation: false });
-    await timeout();
-    await freebet.deployed();
-    console.log("FreeBet deployed to:", freebet.address);
-    await timeout();
-    const freebetImplAddress = await upgrades.erc1967.getImplementationAddress(freebet.address);
-    const freebetImpl = FreeBet.attach(freebetImplAddress);
-    await freebetImpl.initialize(Wallet.createRandom().address);
-    console.log("FreeBetImpl deployed to:", freebetImplAddress);
-    await timeout();
-  }
-
-  // initial settings
-  {
-    await freebet.setLp(LP_ADDRESS);
-    await timeout();
-    console.log("FreeBet: LP address set to", await freebet.LP());
-
-    for (const maintainer of MAINTAINERS) {
-      await freebet.updateMaintainer(maintainer, true);
-      console.log("FreeBet: Added maintainer:", maintainer);
-      await timeout();
-    }
-  }
+  try {
+    await hre.run("verify:verify", {
+      address: access.address,
+      constructorArguments: [],
+    });
+  } catch (err) {}
+  try {
+    await hre.run("verify:verify", {
+      address: freeBetFactory.address,
+      constructorArguments: [],
+    });
+  } catch (err) {}
+  try {
+    await hre.run("verify:verify", {
+      address: freeBetBeaconAddress,
+      constructorArguments: [freeBetImplementationAddress],
+    });
+  } catch (err) {}
+  try {
+    await hre.run("verify:verify", {
+      address: freeBetImplementationAddress,
+      constructorArguments: [],
+    });
+  } catch (err) {}
+  try {
+    await hre.run("verify:verify", {
+      address: log.args.freeBetAddress,
+      constructorArguments: [],
+    });
+  } catch (err) {}
 }
 
 main()

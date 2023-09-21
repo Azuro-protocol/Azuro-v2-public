@@ -1,16 +1,30 @@
 // SPDX-License-Identifier: GPL-3.0
 pragma solidity ^0.8.9;
 
+import "../interface/IAccess.sol";
+import "../interface/ICoreBase.sol";
 import "../interface/ILP.sol";
-import "../interface/IWNative.sol";
+import "../interface/IOwnable.sol";
 import "../libraries/SafeCast.sol";
 import "../utils/OwnableUpgradeable.sol";
+import "@openzeppelin/contracts/proxy/beacon/BeaconProxy.sol";
+import "@openzeppelin/contracts/proxy/beacon/UpgradeableBeacon.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts-upgradeable/token/ERC721/ERC721Upgradeable.sol";
 import "@uniswap/lib/contracts/libraries/TransferHelper.sol";
 
+interface IFreeBet is IOwnable {
+    function initialize(
+        address lpAddress,
+        string memory name,
+        string memory symbol,
+        address affiliate,
+        address manager
+    ) external;
+}
+
 /// @title The tool allows you to grant free bets for any user.
-contract FreeBet is ERC721Upgradeable, OwnableUpgradeable {
+contract FreeBet is ERC721Upgradeable, OwnableUpgradeable, IFreeBet {
     using SafeCast for uint256;
 
     struct Bet {
@@ -22,6 +36,7 @@ contract FreeBet is ERC721Upgradeable, OwnableUpgradeable {
     struct AzuroBet {
         address core;
         address owner;
+        uint256 conditionId;
         uint256 freeBetId;
         uint128 amount;
         uint128 payout;
@@ -36,6 +51,7 @@ contract FreeBet is ERC721Upgradeable, OwnableUpgradeable {
     mapping(uint256 => uint64) public expirationTime;
     uint256 public lastTokenId;
     address public manager;
+    address public affiliate;
 
     event BettorWin(
         address indexed core,
@@ -65,6 +81,7 @@ contract FreeBet is ERC721Upgradeable, OwnableUpgradeable {
     event FreeBetsResolved(uint256[] ids, uint256 unlockedAmount);
     event LpChanged(address indexed newLp);
     event PayoutsResolved(uint256[] azuroBetId);
+    event AffiliateChanged(address newAffiliate);
     event ManagerChanged(address newManager);
 
     error AlreadyResolved();
@@ -72,13 +89,12 @@ contract FreeBet is ERC721Upgradeable, OwnableUpgradeable {
     error InsufficientAmount();
     error InsufficientContractBalance();
     error NonTransferable();
-    error OddsTooSmall();
     error OnlyBetOwner();
+    error OnlyManager();
+    error OddsTooSmall();
     error UnknownCore();
-    error WrongToken();
     error ZeroAmount();
     error ZeroDuration();
-    error OnlyManager();
 
     /**
      * @notice Throw if caller is not manager.
@@ -89,16 +105,32 @@ contract FreeBet is ERC721Upgradeable, OwnableUpgradeable {
     }
 
     receive() external payable {
-        if (msg.sender != token) {
-            IWNative(token).deposit{value: msg.value}();
-        }
+        require(msg.sender == token);
     }
 
-    function initialize(address token_) external initializer {
-        __ERC721_init("XYZFreeBet", "XFBET");
+    function initialize(
+        address lpAddress,
+        string memory name,
+        string memory symbol,
+        address affiliate_,
+        address manager_
+    ) external initializer {
+        __ERC721_init(name, symbol);
         __Ownable_init();
-        if (token_ == address(0)) revert WrongToken();
-        token = token_;
+
+        ILP lp_ = ILP(lpAddress);
+        token = lp_.token();
+        lp = lp_;
+        affiliate = affiliate_;
+        manager = manager_;
+    }
+
+    /**
+     * @notice Owner: set affiliate address for each bet made through free bet redeem.
+     */
+    function setAffiliate(address affiliate_) external onlyOwner {
+        affiliate = affiliate_;
+        emit AffiliateChanged(affiliate_);
     }
 
     /**
@@ -187,17 +219,6 @@ contract FreeBet is ERC721Upgradeable, OwnableUpgradeable {
     }
 
     /**
-     * @notice Withdraw unlocked token reserves in native currency.
-     * @param  amount amount to withdraw
-     */
-    function withdrawReserveNative(uint128 amount) external onlyManager {
-        _checkInsufficient(amount);
-
-        IWNative(token).withdraw(amount);
-        TransferHelper.safeTransferETH(msg.sender, amount);
-    }
-
-    /**
      * @notice Mint free bets to users.
      * @param  receivers addresses to mint free bets to
      * @param  bet bet's data
@@ -255,8 +276,7 @@ contract FreeBet is ERC721Upgradeable, OwnableUpgradeable {
         uint128 amount,
         uint64 outcomeId,
         uint64 deadline,
-        uint64 minOdds,
-        address affiliate
+        uint64 minOdds
     ) external returns (uint256) {
         if (ownerOf(id) != msg.sender) revert OnlyBetOwner();
 
@@ -273,10 +293,17 @@ contract FreeBet is ERC721Upgradeable, OwnableUpgradeable {
             core,
             amount,
             deadline,
-            IBet.BetData(affiliate, abi.encode(conditionId, outcomeId, minOdds))
+            IBet.BetData(affiliate, minOdds, abi.encode(conditionId, outcomeId))
         );
 
-        azuroBets[azuroBetId] = AzuroBet(core, msg.sender, id, amount, 0);
+        azuroBets[azuroBetId] = AzuroBet(
+            core,
+            msg.sender,
+            conditionId,
+            id,
+            amount,
+            0
+        );
         emit FreeBetRedeemed(core, msg.sender, id, azuroBetId, amount);
         return azuroBetId;
     }
@@ -300,17 +327,6 @@ contract FreeBet is ERC721Upgradeable, OwnableUpgradeable {
         uint128 payout = _withdrawPayout(azuroBetId);
         if (payout > 0) {
             TransferHelper.safeTransfer(token, msg.sender, payout);
-        }
-    }
-
-    /**
-     * @notice Withdraw payout in native currency for bet with ID `azuroBetId` made through free bet redeem.
-     */
-    function withdrawPayoutNative(uint256 azuroBetId) external {
-        uint128 payout = _withdrawPayout(azuroBetId);
-        if (payout > 0) {
-            IWNative(token).withdraw(payout);
-            TransferHelper.safeTransferETH(msg.sender, payout);
         }
     }
 
@@ -349,14 +365,9 @@ contract FreeBet is ERC721Upgradeable, OwnableUpgradeable {
         uint256 freeBetId = azuroBet.freeBetId;
         Bet storage bet = freeBets[freeBetId];
         address core = azuroBet.core;
+        uint256 conditionId = azuroBet.conditionId;
 
-        uint128 fullPayout = lp.viewPayout(core, azuroBetId);
-        if (fullPayout > 0) {
-            lp.withdrawPayout(core, azuroBetId, false);
-        }
-
-        if (fullPayout == betAmount) {
-            // cancel
+        if (ICoreBase(core).isConditionCanceled(conditionId)) {
             bet.amount += betAmount;
             lockedReserve += betAmount;
             expirationTime[freeBetId] =
@@ -367,6 +378,8 @@ contract FreeBet is ERC721Upgradeable, OwnableUpgradeable {
         }
 
         azuroBet.amount = 0;
+        uint128 fullPayout = lp.withdrawPayout(core, azuroBetId);
+
         return (fullPayout > betAmount) ? (fullPayout - betAmount) : 0;
     }
 
@@ -411,5 +424,70 @@ contract FreeBet is ERC721Upgradeable, OwnableUpgradeable {
     function _checkInsufficient(uint128 amount) internal view {
         if (IERC20(token).balanceOf(address(this)) < lockedReserve + amount)
             revert InsufficientContractBalance();
+    }
+}
+
+/// @title Azuro FreeBet contract factory.
+contract FreeBetFactory is OwnableUpgradeable {
+    address public freeBetBeacon;
+    IAccess public access;
+
+    event NewFreeBet(
+        address indexed freeBetAddress,
+        address indexed lpAddress,
+        string name,
+        string symbol,
+        address affiliate,
+        address manager
+    );
+
+    /**
+     * @notice Throw if caller have no access to function with selector `selector`.
+     */
+    modifier restricted(bytes4 selector) {
+        access.checkAccess(msg.sender, address(this), selector);
+        _;
+    }
+
+    function initialize(address accessAddress) external initializer {
+        __Ownable_init();
+
+        access = IAccess(accessAddress);
+
+        UpgradeableBeacon freeBetBeacon_ = new UpgradeableBeacon(
+            address(new FreeBet())
+        );
+        freeBetBeacon_.transferOwnership(msg.sender);
+        freeBetBeacon = address(freeBetBeacon_);
+    }
+
+    /**
+     * @notice Deploy a new FreeBet contract.
+     * @param  lpAddress Liquidity Pool's address for which FreeBets will be issued.
+     * @param  name Name of the FreeBet token.
+     * @param  symbol Symbol of the FreeBet token.
+     * @param  affiliate Address to be used as the affiliate address in minted FreeBets.
+     * @param  manager Address that manages the FreeBets.
+     */
+    function createFreeBet(
+        address lpAddress,
+        string memory name,
+        string memory symbol,
+        address affiliate,
+        address manager
+    ) external restricted(this.createFreeBet.selector) {
+        address freeBetAddress = address(new BeaconProxy(freeBetBeacon, ""));
+        IFreeBet freeBet = IFreeBet(freeBetAddress);
+        freeBet.initialize(lpAddress, name, symbol, affiliate, manager);
+        freeBet.transferOwnership(msg.sender);
+
+        emit NewFreeBet(
+            freeBetAddress,
+            lpAddress,
+            name,
+            symbol,
+            affiliate,
+            manager
+        );
     }
 }

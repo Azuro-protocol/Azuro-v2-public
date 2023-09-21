@@ -5,6 +5,7 @@ const { getTimeout } = require("../../utils/utils");
 async function main() {
   const TOKEN_ADDRESS = process.env.TOKEN_ADDRESS;
   const LP_ADDRESS = process.env.LP_ADDRESS;
+  const FREEBET_AFFILIATE = process.env.FREEBET_AFFILIATE;
   const FREEBET_MANAGER = process.env.FREEBET_MANAGER;
 
   const ACCESS_ADDRESS = process.env.ACCESS_ADDRESS;
@@ -36,6 +37,12 @@ async function main() {
     "\nTOKEN:",
     TOKEN_ADDRESS
   );
+
+  await freeBet.setAffiliate(FREEBET_AFFILIATE);
+  console.log("FREEBET AFFILIATE:", FREEBET_AFFILIATE);
+
+  await freeBet.setManager(FREEBET_MANAGER);
+  console.log("FREEBET MANAGER:", FREEBET_MANAGER);
 }
 
 main()

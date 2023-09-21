@@ -7,16 +7,14 @@ async function main() {
   const ACCESS_ADDRESS = process.env.ACCESS_ADDRESS ?? "";
   const LP_ADDRESS = process.env.LP_ADDRESS ?? "";
   const CORE_ADDRESS = process.env.CORE_ADDRESS ?? "";
-  const FACTORY_OWNER_KEY = process.env.FACTORY_OWNER_KEY;
+  const MAX_REINFORCEMENT = process.env.MAX_REINFORCEMENT;
 
   const MULTIPLIER = 1e12;
 
   const [poolOwner] = await ethers.getSigners();
-  const factoryOwner = FACTORY_OWNER_KEY == undefined ? poolOwner : new ethers.Wallet(FACTORY_OWNER_KEY);
+  const factoryOwner = poolOwner;
   const deployer = poolOwner;
-  const marginality = MULTIPLIER * 0.1; // 10%
   const reinforcementAbility = MULTIPLIER * 0.2; // 20%
-  const maxReinforcementShare = MULTIPLIER * 0.1; // 10%
 
   let summary = {};
 
@@ -51,12 +49,11 @@ async function main() {
   // Set options
   await changeReinforcementAbility(lp, betExpress, poolOwner, reinforcementAbility);
   await timeout();
-  await betExpress.connect(poolOwner).setParams(marginality, maxReinforcementShare);
+  await betExpress.connect(poolOwner).changeReinforcement(MAX_REINFORCEMENT);
   await timeout();
 
   summary["reinforcementAbility"] = reinforcementAbility;
-  summary["maxReinforcementShare"] = maxReinforcementShare;
-  summary["marginality"] = marginality;
+  summary["maxReinforcement"] = MAX_REINFORCEMENT;
 
   // Allow express to change odds in core
   await grantRole(access, poolOwner, betExpress.address, 2);

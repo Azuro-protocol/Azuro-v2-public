@@ -20,12 +20,24 @@ const LIQUIDITY = tokens(200000);
 
 const OUTCOMEWIN = 1;
 const OUTCOMELOSE = 2;
-const IPFS = ethers.utils.formatBytes32String("ipfs");
 
 const MULTIPLIER = 1e12;
 
 const ONE_HOUR = 3600;
 const ONE_MINUTE = 60;
+
+const getLPNFTDetails = async (txAdd) => {
+  const receipt = await txAdd.wait();
+  let eAdd = receipt.events.filter((x) => {
+    return x.topics[0] == ethers.utils.keccak256(ethers.utils.toUtf8Bytes("LiquidityAdded(address,uint48,uint256)"));
+  });
+  return {
+    tokenId: ethers.utils.defaultAbiCoder.decode(["uint48"], eAdd[0].topics[2])[0],
+    amount: ethers.utils.defaultAbiCoder.decode(["uint256"], eAdd[0].data)[0],
+    account: ethers.utils.defaultAbiCoder.decode(["address"], eAdd[0].topics[1])[0],
+    gasUsed: calcGas(receipt),
+  };
+};
 
 describe("ProxyFront test", function () {
   const wrapLayer = initFixtureTree(ethers.provider);
@@ -36,7 +48,6 @@ describe("ProxyFront test", function () {
   const minDepo = tokens(10);
   const daoFee = MULTIPLIER * 0.09; // 9%
   const dataProviderFee = MULTIPLIER * 0.01; // 1%
-  const affiliateFee = MULTIPLIER * 0.33; // 33%
 
   const pool1 = 5000000;
   const pool2 = 5000000;
@@ -62,7 +73,6 @@ describe("ProxyFront test", function () {
       minDepo,
       daoFee,
       dataProviderFee,
-      affiliateFee,
       LIQUIDITY
     ));
 
@@ -84,12 +94,16 @@ describe("ProxyFront test", function () {
         core: core.address,
         amount: betAmount,
         expiresAt: time + 100,
-        extraData: { affiliate: ethers.constants.AddressZero, data: encodeBetData(condId, OUTCOMEWIN, 0) },
+        extraData: {
+          affiliate: ethers.constants.AddressZero,
+          minOdds: 0,
+          data: encodeBetData(condId, [OUTCOMEWIN], 0),
+        },
       });
       betsAmount = betsAmount.add(betAmount);
     }
 
-    await createGame(lp, oracle, gameId, IPFS, time + ONE_HOUR);
+    await createGame(lp, oracle, gameId, time + ONE_HOUR);
     await createCondition(
       core,
       oracle,
@@ -106,7 +120,7 @@ describe("ProxyFront test", function () {
 
   context("Check functions execution", function () {
     it("Making bets", async () => {
-      const txBet = await proxyFront.connect(account).bet(lp.address, betsData, false);
+      const txBet = await proxyFront.connect(account).bet(lp.address, betsData);
       const receipt = await txBet.wait();
 
       expect(await account.getBalance()).to.be.equal(balance.sub(calcGas(receipt)));
@@ -116,7 +130,7 @@ describe("ProxyFront test", function () {
       }
     });
     it("Making bets in native tokens", async () => {
-      const txBet = await proxyFront.connect(account).bet(lp.address, betsData, true, { value: betsAmount });
+      const txBet = await proxyFront.connect(account).bet(lp.address, betsData, { value: betsAmount });
       const receipt = await txBet.wait();
 
       expect(await account.getBalance()).to.be.equal(balance.sub(betsAmount).sub(calcGas(receipt)));
@@ -142,14 +156,14 @@ describe("ProxyFront test", function () {
           0
         );
         deltaPayout = deltaPayout.add(res.odds.mul(betAmount).div(MULTIPLIER).sub(betAmount));
-        withdrawPayoutsData.push({ core: core.address, tokenId: res.tokenId });
+        withdrawPayoutsData.push({ core: core.address, tokenId: res.tokenId, isNative: false });
       }
 
       time = await getBlockTime(ethers);
       await timeShift(time + ONE_HOUR + ONE_MINUTE);
-      await core.connect(oracle).resolveCondition(condId, OUTCOMEWIN);
+      await core.connect(oracle).resolveCondition(condId, [OUTCOMEWIN]);
 
-      await proxyFront.connect(account).withdrawPayouts(lp.address, withdrawPayoutsData, false);
+      await proxyFront.connect(account).withdrawPayouts(withdrawPayoutsData);
       expect(await wxDAI.balanceOf(account.address)).to.be.equal(wxDAIBalance.add(deltaPayout));
     });
     it("Withdrawing payouts in native tokens", async () => {
@@ -159,21 +173,54 @@ describe("ProxyFront test", function () {
       for (const _ of Array(3).keys()) {
         const txBet = await lp.connect(poolOwner).betFor(account.address, core.address, betAmount, time + 100, {
           affiliate: ethers.constants.AddressZero,
-          data: encodeBetData(condId, OUTCOMEWIN, 0),
+          minOdds: 0,
+          data: encodeBetData(condId, [OUTCOMEWIN]),
         });
         const { tokenId, odds } = await getTokenIdOdds(core, txBet);
 
         payout = payout.add(odds.mul(betAmount).div(MULTIPLIER));
-        withdrawPayoutsData.push({ core: core.address, tokenId: tokenId });
+        withdrawPayoutsData.push({ core: core.address, tokenId: tokenId, isNative: true });
       }
 
       time = await getBlockTime(ethers);
       await timeShift(time + ONE_HOUR + ONE_MINUTE);
-      await core.connect(oracle).resolveCondition(condId, OUTCOMEWIN);
+      await core.connect(oracle).resolveCondition(condId, [OUTCOMEWIN]);
 
-      await proxyFront.connect(poolOwner).withdrawPayouts(lp.address, withdrawPayoutsData, true);
+      await proxyFront.connect(poolOwner).withdrawPayouts(withdrawPayoutsData);
 
       expect(await account.getBalance()).to.be.equal(balance.add(payout));
+      expect(await wxDAI.balanceOf(account.address)).to.be.equal(wxDAIBalance);
+    });
+    it("Adding liquidity in native tokens", async () => {
+      const deposit = tokens(100);
+
+      const txAdd = await proxyFront.connect(account).addLiquidityNative(lp.address, [], { value: deposit });
+      const details = await getLPNFTDetails(txAdd);
+
+      expect(details.amount).to.be.equal(deposit);
+      expect(await lp.ownerOf(details.tokenId)).to.be.equal(account.address);
+      expect(await account.getBalance()).to.be.equal(balance.sub(deposit).sub(details.gasUsed));
+      expect(await wxDAI.balanceOf(account.address)).to.be.equal(wxDAIBalance);
+    });
+    it("Withdrawing liquidity in native tokens", async () => {
+      const deposit = tokens(100);
+
+      let gasUsed = BigNumber.from(0);
+      const txAdd = await proxyFront.connect(account).addLiquidityNative(lp.address, [], { value: deposit });
+      const details = await getLPNFTDetails(txAdd);
+      gasUsed = gasUsed.add(details.gasUsed);
+
+      const txApprove = await lp.connect(account).approve(proxyFront.address, details.tokenId);
+      let receipt = await txApprove.wait();
+      gasUsed = gasUsed.add(calcGas(receipt));
+
+      const txWithdraw = await proxyFront
+        .connect(account)
+        .withdrawLiquidityNative(lp.address, details.tokenId, MULTIPLIER);
+      receipt = await txWithdraw.wait();
+      gasUsed = gasUsed.add(calcGas(receipt));
+
+      expect(await account.getBalance()).to.be.equal(balance.sub(gasUsed));
       expect(await wxDAI.balanceOf(account.address)).to.be.equal(wxDAIBalance);
     });
   });
@@ -181,22 +228,22 @@ describe("ProxyFront test", function () {
     it("Bettor CANNOT place bets using common tokens if it don't have enough balance", async () => {
       await wxDAI.connect(dataProvider).approve(proxyFront.address, tokens(999_999_999_999_999));
       await dataProvider.sendTransaction({ to: wxDAI.address, value: betsAmount.sub(1) });
-      await expect(proxyFront.connect(dataProvider).bet(lp.address, betsData, false)).to.be.revertedWith(
+      await expect(proxyFront.connect(dataProvider).bet(lp.address, betsData)).to.be.revertedWith(
         "TransferHelper::transferFrom: transferFrom failed"
       );
 
       await dataProvider.sendTransaction({ to: wxDAI.address, value: 1 });
-      await proxyFront.connect(dataProvider).bet(lp.address, betsData, false);
+      await proxyFront.connect(dataProvider).bet(lp.address, betsData);
     });
     it("Bettor CANNOT place bets using native tokens if passed value is less or larger than the sum of bets", async () => {
       await expect(
-        proxyFront.connect(account).bet(lp.address, betsData, true, { value: betsAmount.sub(1) })
+        proxyFront.connect(account).bet(lp.address, betsData, { value: betsAmount.sub(1) })
       ).to.be.revertedWithCustomError(proxyFront, "IncorrectValue");
       await expect(
-        proxyFront.connect(account).bet(lp.address, betsData, true, { value: betsAmount.add(1) })
+        proxyFront.connect(account).bet(lp.address, betsData, { value: betsAmount.add(1) })
       ).to.be.revertedWithCustomError(proxyFront, "IncorrectValue");
 
-      await proxyFront.connect(account).bet(lp.address, betsData, true, { value: betsAmount });
+      await proxyFront.connect(account).bet(lp.address, betsData, { value: betsAmount });
     });
   });
 });

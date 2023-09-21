@@ -1,8 +1,8 @@
 const { BigNumber } = require("@ethersproject/bignumber");
 const { ethers } = require("hardhat");
+const { MerkleTree } = require("merkletreejs");
+const { keccak256 } = require("@ethersproject/keccak256");
 const { FORKING, MULTIPLIER, UPGRADE_TEST } = require("../utils/constants");
-
-const abiCoder = ethers.utils.defaultAbiCoder;
 
 function getTimeout(chainId) {
   let timeout;
@@ -17,7 +17,7 @@ function getTimeout(chainId) {
       timeout = 800;
       break; // Hardhat
     default:
-      timeout = 60000;
+      timeout = 30000;
   }
 
   return () => {
@@ -36,6 +36,14 @@ async function timeShiftBy(ethers, timeDelta) {
   await network.provider.send("evm_mine");
 }
 
+async function blockShiftBy(ethers, blockDelta) {
+  let time = await getBlockTime(ethers);
+  for (const iterator of Array(blockDelta).keys()) {
+    await network.provider.send("evm_setNextBlockTimestamp", [++time]);
+    await network.provider.send("evm_mine");
+  }
+}
+
 async function getBlockTime(ethers) {
   const blockNumBefore = await ethers.provider.getBlockNumber();
   const blockBefore = await ethers.provider.getBlock(blockNumBefore);
@@ -46,6 +54,16 @@ async function getBlockTime(ethers) {
 function tokens(val) {
   return BigNumber.from(val).mul(BigNumber.from("10").pow(18));
 }
+
+const addLiquidity = async (lp, account, amount) => {
+  let txAdd = await lp.connect(account).addLiquidity(BigNumber.from(amount), []);
+  return await getLPNFTToken(txAdd);
+};
+
+const nextBatch = async (ethers, core, condId, batchMinBlocks) => {
+  await blockShiftBy(ethers, batchMinBlocks);
+  await core.executeBatch(condId);
+};
 
 const getTokenId = async (core, txBet) => {
   const receipt = await txBet.wait();
@@ -80,20 +98,66 @@ const getTokenIdDetails = async (core, txBet) => {
   return { tokenId: log.args.tokenId, odds: log.args.odds, account: log.args.bettor, gasUsed: calcGas(receipt) };
 };
 
+const getLiveBetDetails = async (core, txBet) => {
+  const receipt = await txBet.wait();
+  let iface = new ethers.utils.Interface(
+    core.interface.format(ethers.utils.FormatTypes.full).filter((x) => {
+      return x.includes("NewLiveBet");
+    })
+  );
+
+  let event;
+  for (const log of receipt.logs) {
+    if (log.topics[0] == iface.getEventTopic(iface.fragments[0])) {
+      event = iface.parseLog(log).args;
+      break;
+    }
+  }
+
+  return {
+    betId: event.betId,
+    account: event.bettor,
+    affiliate: event.affiliate,
+    outcomeId: event.outcomeId,
+    amount: event.amount,
+    conditionId: event.conditionId,
+    batchId: event.batchId,
+    minOdds: event.minOdds,
+    gasUsed: calcGas(receipt),
+  };
+};
+
+const getClaimBetTokenDetails = async (azuroBet, txBet) => {
+  const receipt = await txBet.wait();
+  let iface = new ethers.utils.Interface(
+    azuroBet.interface.format(ethers.utils.FormatTypes.full).filter((x) => {
+      return x.includes("TransferSingle");
+    })
+  );
+  let log = iface.parseLog(receipt.logs[0]);
+  return {
+    operator: log.args.operator,
+    from: log.args.from,
+    to: log.args.to,
+    id: log.args.id,
+    value: log.args.value,
+  };
+};
+
 const getLPNFTToken = async (txAdd) => {
   let eAdd = (await txAdd.wait()).events.filter((x) => {
     return x.event == "LiquidityAdded";
   });
-  return eAdd[0].args.leaf;
+  return eAdd[0].args.depositId;
 };
 
-const getLPNFTTokenDetails = async (txAdd) => {
+const getLPNFTDetails = async (txAdd) => {
   const receipt = await txAdd.wait();
   let eAdd = receipt.events.filter((x) => {
     return x.event == "LiquidityAdded";
   });
   return {
-    tokenId: eAdd[0].args.leaf,
+    tokenId: eAdd[0].args.depositId,
     account: eAdd[0].args.account,
     amount: eAdd[0].args.amount,
     gasUsed: calcGas(receipt),
@@ -146,37 +210,46 @@ const deployContracts = async (ethers, owner) => {
   await beaconLP.deployed();
 
   // silence linked library proxy deploy warning:
-  // Warning: Potentially unsafe deployment of PrematchCore
+  // Warning: Potentially unsafe deployment of LiveCore
   //  You are using the `unsafeAllow.external-library-linking` flag to include external libraries.
   //  Make sure you have manually checked that the linked libraries are upgrade safe.
   upgrades.silenceWarnings();
 
-  // Affiliate helper library
-  const AffiliateHelper = await ethers.getContractFactory("AffiliateHelper");
-  const affiliateHelper = await AffiliateHelper.deploy();
-  await affiliateHelper.deployed();
-
   // Pre-match core beacon
   const PrematchCore = await ethers.getContractFactory("PrematchCore", {
     signer: owner,
-    libraries: {
-      AffiliateHelper: affiliateHelper.address,
-    },
     unsafeAllowCustomTypes: true,
   });
   const beaconPrematchCore = await upgrades.deployBeacon(PrematchCore, { unsafeAllowLinkedLibraries: true });
   await beaconPrematchCore.deployed();
 
+  // Live core beacon
+  // TODO: move back commented section
+  // const LiveCore = await ethers.getContractFactory("LiveCore", {
+  //   signer: owner,
+  //   unsafeAllowCustomTypes: true,
+  // });
+  // const beaconLiveCore = await upgrades.deployBeacon(LiveCore, { unsafeAllowLinkedLibraries: true });
+  // await beaconLiveCore.deployed();
+
   return {
     beaconAccess,
     beaconLP,
     beaconPrematchCore,
+    beaconLiveCore: beaconPrematchCore, // TODO: move it back to beaconLiveCore
     beaconAzuroBet,
-    affiliateHelper,
   };
 };
 
-const createFactory = async (ethers, owner, beaconAccess, beaconLP, beaconPrematchCore, beaconAzuroBet) => {
+const createFactory = async (
+  ethers,
+  owner,
+  beaconAccess,
+  beaconLP,
+  beaconPrematchCore,
+  beaconLiveCore,
+  beaconAzuroBet
+) => {
   // Factory
   const Factory = await ethers.getContractFactory("Factory", { signer: owner });
   const factory = await upgrades.deployProxy(Factory, [beaconAccess.address, beaconLP.address]);
@@ -207,20 +280,10 @@ const getCreatePoolDetails = async (tx) => {
   return { lp: eNewPool[0].args[0], core: await getPluggedCore(tx), access: eNewPool[0].args[3] };
 };
 
-const createPool = async (
-  ethers,
-  factory,
-  affiliateHelper,
-  poolOwner,
-  token,
-  minDepo,
-  daoFee,
-  dataProviderFee,
-  affiliateFee
-) => {
+const createPool = async (ethers, factory, poolOwner, token, minDepo, daoFee, dataProviderFee) => {
   const txCreatePool = await factory
     .connect(poolOwner)
-    .createPool(token, minDepo, daoFee, dataProviderFee, affiliateFee, "pre-match");
+    .createPool(token, minDepo, daoFee, dataProviderFee, "pre-match");
 
   const txDetails = await getCreatePoolDetails(txCreatePool);
 
@@ -232,9 +295,6 @@ const createPool = async (
 
   const PrematchCore = await ethers.getContractFactory("PrematchCore", {
     signer: poolOwner,
-    libraries: {
-      AffiliateHelper: affiliateHelper.address,
-    },
     unsafeAllowCustomTypes: true,
   });
   const core = await PrematchCore.attach(txDetails.core);
@@ -247,6 +307,21 @@ const createPool = async (
   return { access, core, lp, azuroBet };
 };
 
+const plugLiveCore = async (ethers, poolOwner, factory, lp) => {
+  upgrades.silenceWarnings();
+  const LiveCore = await ethers.getContractFactory("LiveCore", {
+    signer: poolOwner,
+    unsafeAllowCustomTypes: true,
+  });
+  const txPlugCore = await factory.connect(poolOwner).plugCore(lp, "live");
+  const liveCore = await LiveCore.attach(await getPluggedCore(txPlugCore));
+
+  const AzuroBet = await ethers.getContractFactory("AzuroBet");
+  const azuroBet = await AzuroBet.attach(await liveCore.azuroBet());
+
+  return { liveCore: liveCore, azuroBet: azuroBet };
+};
+
 const plugExpress = async (ethers, poolOwner, factoryOwner, factory, lp, core, timeout) => {
   upgrades.silenceWarnings();
 
@@ -255,14 +330,12 @@ const plugExpress = async (ethers, poolOwner, factoryOwner, factory, lp, core, t
   });
 
   let beaconExpress;
-  if ((await factory.coreBeacons("express")).core == ethers.constants.AddressZero) {
-    beaconExpress = await upgrades.deployBeacon(BetExpress);
-    await beaconExpress.deployed();
-    await timeout();
+  beaconExpress = await upgrades.deployBeacon(BetExpress);
+  await beaconExpress.deployed();
+  await timeout();
 
-    await factory.connect(factoryOwner).updateCoreType("express", beaconExpress.address, ethers.constants.AddressZero);
-    await timeout();
-  }
+  await factory.connect(factoryOwner).updateCoreType("express", beaconExpress.address, ethers.constants.AddressZero);
+  await timeout();
 
   const plugTx = await factory.connect(poolOwner).plugExpress(lp, core, "express");
   const betExpress = await BetExpress.attach(await getPluggedCore(plugTx));
@@ -279,12 +352,11 @@ const prepareEmptyStand = async (
   bettor,
   minDepo,
   daoFee,
-  dataProviderFee,
-  affiliateFee
+  dataProviderFee
 ) => {
   const WXDAI = await ethers.getContractFactory("WETH9");
   const mintableAmount = tokens(80_000_000);
-  let factory, access, lp, wxDAI, core, azuroBet, affiliateHelper;
+  let factory, access, lp, wxDAI, core, azuroBet;
 
   if (FORKING) {
     await network.provider.request({
@@ -307,13 +379,7 @@ const prepareEmptyStand = async (
     });
     const factoryOwner_ = await ethers.provider.getSigner(factoryOwnerAddress);
 
-    const AffiliateHelper = await ethers.getContractFactory("AffiliateHelper");
-    affiliateHelper = AffiliateHelper.attach(process.env.AFFILIATEHELPER_ADDRESS);
-
     const PrematchCore = await ethers.getContractFactory("PrematchCore", {
-      libraries: {
-        AffiliateHelper: affiliateHelper.address,
-      },
       unsafeAllowCustomTypes: true,
     });
     core = await PrematchCore.attach(process.env.CORE_ADDRESS);
@@ -346,9 +412,6 @@ const prepareEmptyStand = async (
       }
 
       const PrematchCore = await ethers.getContractFactory("PrematchCore", {
-        libraries: {
-          AffiliateHelper: affiliateHelper.address,
-        },
         unsafeAllowCustomTypes: true,
         signer: lpOwner,
       });
@@ -376,7 +439,6 @@ const prepareEmptyStand = async (
     await lp.connect(poolOwner).updateRole(oracle.address, 0 /*0 - ORACLE*/, true);
     await lp.connect(poolOwner).changeFee(0, daoFee);
     await lp.connect(poolOwner).changeFee(1, dataProviderFee);
-    await lp.connect(poolOwner).changeFee(2, affiliateFee);
     await lp.connect(poolOwner).changeReinforcementAbility(MULTIPLIER);
 
     wxDAI = await WXDAI.attach(lp.token());
@@ -395,21 +457,19 @@ const prepareEmptyStand = async (
       contracts.beaconAccess,
       contracts.beaconLP,
       contracts.beaconPrematchCore,
+      contracts.beaconLiveCore,
       contracts.beaconAzuroBet
     );
 
-    ({ affiliateHelper } = contracts);
     // Pool
     ({ access, lp, core, azuroBet } = await createPool(
       ethers,
       factory,
-      affiliateHelper,
       poolOwner,
       wxDAI.address,
       minDepo,
       daoFee,
-      dataProviderFee,
-      affiliateFee
+      dataProviderFee
     ));
   }
 
@@ -426,7 +486,6 @@ const prepareEmptyStand = async (
     core,
     azuroBet,
     wxDAI,
-    affiliateHelper,
     roleIds,
   };
 };
@@ -440,7 +499,6 @@ const prepareStand = async (
   minDepo,
   daoFee,
   dataProviderFee,
-  affiliateFee,
   liquidity
 ) => {
   let stand = await prepareEmptyStand(
@@ -451,43 +509,13 @@ const prepareStand = async (
     bettor,
     minDepo,
     daoFee,
-    dataProviderFee,
-    affiliateFee
+    dataProviderFee
   );
   const approveAmount = tokens(999_999_999_999_999);
   await stand.wxDAI.connect(poolOwner).approve(stand.lp.address, approveAmount);
   await stand.wxDAI.connect(bettor).approve(stand.lp.address, approveAmount);
 
-  stand["lpnft"] = await getLPNFTToken(await stand.lp.connect(poolOwner).addLiquidity(liquidity));
-
-  return stand;
-};
-
-const prepareStandNativeLiquidity = async (
-  ethers,
-  factoryOwner,
-  poolOwner,
-  dataProvider,
-  bettor,
-  minDepo,
-  daoFee,
-  dataProviderFee,
-  affiliateFee,
-  liquidity
-) => {
-  let stand = await prepareEmptyStand(
-    ethers,
-    factoryOwner,
-    poolOwner,
-    dataProvider,
-    bettor,
-    minDepo,
-    daoFee,
-    dataProviderFee,
-    affiliateFee
-  );
-
-  stand["lpnft"] = await getLPNFTToken(await stand.lp.connect(poolOwner).addLiquidityNative({ value: liquidity }));
+  stand["lpnft"] = await addLiquidity(stand.lp, poolOwner, liquidity);
 
   return stand;
 };
@@ -496,33 +524,48 @@ const prepareRoles = async (access, poolOwner, lp, core) => {
   const oracleRoleId = await addRole(access, poolOwner, "Oracle");
   const maintainerRoleId = await addRole(access, poolOwner, "Maintainer");
   const oddsManagerRoleId = await addRole(access, poolOwner, "OddsManager");
+
+  const marginManagerRoleId = await addRole(access, poolOwner, "MarginManager");
+  const reinforcementManagerRoleId = await addRole(access, poolOwner, "ReinforcementManager");
   const rolesData = [
     { target: lp.address, selector: "0x69958ab9", roleId: oracleRoleId }, // cancelGame
-    { target: lp.address, selector: "0x0c6b6b7a", roleId: oracleRoleId }, // createGame
+    { target: lp.address, selector: "0x87757e31", roleId: oracleRoleId }, // createGame
     { target: lp.address, selector: "0xa8822061", roleId: oracleRoleId }, // shiftGame
     { target: core.address, selector: "0xbc4925fc", roleId: oracleRoleId }, // cancelCondition
-    { target: core.address, selector: "0x8ea8c308", roleId: oracleRoleId }, // changeOdds
-    { target: core.address, selector: "0xc6600c7c", roleId: oracleRoleId }, // createCondition
+    { target: core.address, selector: "0x90fb4d48", roleId: oracleRoleId }, // changeOdds
+    { target: core.address, selector: "0xa08be625", roleId: oracleRoleId }, // createCondition
     { target: core.address, selector: "0xbc4925fc", roleId: maintainerRoleId }, // cancelCondition
     { target: core.address, selector: "0x6fea02f0", roleId: maintainerRoleId }, // stopCondition
-    { target: core.address, selector: "0x8ea8c308", roleId: oddsManagerRoleId }, // changeOdds
+    { target: core.address, selector: "0x90fb4d48", roleId: oddsManagerRoleId }, // changeOdds
+    { target: core.address, selector: "0x56ee77bb", roleId: marginManagerRoleId }, // changeMargin
+    { target: core.address, selector: "0xcf278b0c", roleId: reinforcementManagerRoleId }, // changeReinforcement
   ];
   await bindRoles(access, poolOwner, rolesData);
 
-  return { oracle: oracleRoleId, maintainer: maintainerRoleId, oddsManager: oddsManagerRoleId };
+  return {
+    oracle: oracleRoleId,
+    maintainer: maintainerRoleId,
+    oddsManager: oddsManagerRoleId,
+    marginManager: marginManagerRoleId,
+    reinforcementManager: reinforcementManagerRoleId,
+  };
 };
 
-const prepareFreeBetRoles = async (access, freebet, poolOwner) => {
-  const freebetManagerRoleId = await addRole(access, poolOwner, "FreeBetManager");
+const prepareLiveCoreRoles = async (access, poolOwner, core, roleIds) => {
+  const affMasterRoleId = await addRole(access, poolOwner, "AffMaster");
   const rolesData = [
-    { target: freebet.address, selector: "0x95c25200", roleId: freebetManagerRoleId }, // mint
-    { target: freebet.address, selector: "0x4aaf7d9e", roleId: freebetManagerRoleId }, // mintBatch
-    { target: freebet.address, selector: "0x69c6e9e4", roleId: freebetManagerRoleId }, // withdrawReserve
-    { target: freebet.address, selector: "0xbf64c51a", roleId: freebetManagerRoleId }, // withdrawReserveNative
+    { target: core.address, selector: "0xbc4925fc", roleId: roleIds.oracle }, // cancelCondition
+    { target: core.address, selector: "0x1d3a0367", roleId: roleIds.oracle }, // changeBatchLimits
+    { target: core.address, selector: "0x8ea8c308", roleId: roleIds.oracle }, // changeOdds
+    { target: core.address, selector: "0xc6600c7c", roleId: roleIds.oracle }, // createCondition
+    { target: core.address, selector: "0xbc4925fc", roleId: roleIds.maintainer }, // cancelCondition
+    { target: core.address, selector: "0x6fea02f0", roleId: roleIds.maintainer }, // stopCondition
+    { target: core.address, selector: "0x8ea8c308", roleId: roleIds.oddsManager }, // changeOdds
+    { target: core.address, selector: "0xe798d913", roleId: affMasterRoleId }, // setAffRewards
   ];
   await bindRoles(access, poolOwner, rolesData);
 
-  return freebetManagerRoleId;
+  return affMasterRoleId;
 };
 
 const prepareAccess = async (access, poolOwner, oracle, oracle2, maintainer, roleIds) => {
@@ -530,6 +573,8 @@ const prepareAccess = async (access, poolOwner, oracle, oracle2, maintainer, rol
   await grantRole(access, poolOwner, oracle2, roleIds.oracle);
   await grantRole(access, poolOwner, maintainer, roleIds.maintainer);
   await grantRole(access, poolOwner, maintainer, roleIds.oddsManager);
+  await grantRole(access, poolOwner, maintainer, roleIds.marginManager);
+  await grantRole(access, poolOwner, maintainer, roleIds.reinforcementManager);
 };
 
 const getRoleAddedDetails = async (txAdd) => {
@@ -565,63 +610,63 @@ const grantRole = async (access, owner, account, roleId) => {
   return getTransferredNFTId(access, txGrant);
 };
 
+const calcCashout = async (core, tokenId) => {
+  const bet = await core.bets(tokenId);
+  const conditionId = bet.conditionId;
+
+  const condition = await core.getCondition(conditionId);
+
+  let virtualFund = BigNumber.from(0);
+  for (let i = 0; i < condition.virtualFunds.length; i++) {
+    virtualFund = virtualFund.add(condition.virtualFunds[i]);
+  }
+
+  const outcomeIndex = await core.getOutcomeIndex(conditionId, bet.outcome);
+  const probability = condition.virtualFunds[outcomeIndex].mul(MULTIPLIER).div(virtualFund);
+
+  // Cash-out = potential payout * outcome probability * (1 - margin)
+  return bet.payout
+    .mul(probability)
+    .div(MULTIPLIER)
+    .mul(MULTIPLIER - condition.margin)
+    .div(MULTIPLIER);
+};
+
 const calcGas = (receipt) => {
   return receipt.effectiveGasPrice.mul(receipt.cumulativeGasUsed);
 };
 
-const createGame = async (lp, oracle, oracleGameId, ipfsHashHex, time) => {
-  await lp.connect(oracle).createGame(oracleGameId, ipfsHashHex, time);
+const createGame = async (lp, oracle, oracleGameId, time) => {
+  await lp.connect(oracle).createGame(oracleGameId, time, []);
 };
 
 const createCondition = async (core, oracle, gameId, oracleCondId, pools, outcomes, reinforcement, margin) => {
-  await core.connect(oracle).createCondition(gameId, oracleCondId, pools, outcomes, reinforcement, margin);
+  await core.connect(oracle).createCondition(gameId, oracleCondId, pools, outcomes, reinforcement, margin, 1);
 };
 
-const encodeBetData = (condIDHash, outcome, minrate) => {
+const encodeBetData = (condIDHash, outcome) => {
   return ethers.utils.defaultAbiCoder.encode(
-    ["tuple(uint256 conditionId, uint64 outcomeId, uint64 minOdds)"],
-    [{ conditionId: condIDHash, outcomeId: outcome, minOdds: minrate }]
+    ["tuple(uint256 conditionId, uint64 outcomeId)"],
+    [{ conditionId: condIDHash, outcomeId: outcome }]
   );
-};
-
-const makeAddLiquidityNative = async (lp, account, amount) => {
-  let txAdd = await lp.connect(account).addLiquidityNative({ value: BigNumber.from(amount) });
-  let res = await getLPNFTTokenDetails(txAdd);
-  return [res.tokenId, res.gasUsed, res.account, res.amount];
-};
-
-const makeBetNativeGetTokenId = async (
-  lp,
-  core,
-  account,
-  affiliate,
-  condIDHash,
-  betAmount,
-  outcome,
-  deadline,
-  minrate
-) => {
-  let txBet = await lp.connect(account).betNative(
-    core.address,
-    deadline,
-    {
-      affiliate: affiliate,
-      data: encodeBetData(condIDHash, outcome, minrate),
-    },
-    {
-      value: BigNumber.from(betAmount),
-    }
-  );
-  let res = await getTokenIdDetails(core, txBet);
-  return [res.tokenId, res.odds, res.gasUsed, res.account];
 };
 
 const makeBetGetTokenId = async (lp, core, account, affiliate, condIDHash, betAmount, outcome, deadline, minrate) => {
   let txBet = await lp.connect(account).bet(core.address, betAmount, deadline, {
     affiliate: affiliate,
-    data: encodeBetData(condIDHash, outcome, minrate),
+    minOdds: minrate,
+    data: encodeBetData(condIDHash, outcome),
   });
   let res = await getTokenId(core, txBet);
+  return res;
+};
+
+const makeBetLiveGetTokenId = async (lp, account, core, affiliate, condId, betAmount, outcome, deadline, minrate) => {
+  let txBet = await lp.connect(account).bet(core.address, betAmount, deadline, {
+    affiliate: affiliate,
+    data: encodeBetData(condIDHash, outcome, minrate),
+  });
+  let res = await getLiveBetDetails(core, txBet);
   return res;
 };
 
@@ -638,56 +683,32 @@ const makeBetGetTokenIdOdds = async (
 ) => {
   let txBet = await lp.connect(account).bet(core.address, betAmount, deadline, {
     affiliate: affiliate,
-    data: encodeBetData(condIDHash, outcome, minrate),
+    minOdds: minrate,
+    data: encodeBetData(condIDHash, outcome),
   });
   let res = await getTokenIdOdds(core, txBet);
   return { tokenId: res.tokenId, odds: res.odds };
 };
 
-const makeWithdrawLiquidity = async (lp, account, lpnft, percent) => {
-  let txWithdraw = await lp.connect(account).withdrawLiquidityNative(lpnft, percent, false);
-  let res = await getWithdrawLiquidityDetails(txWithdraw);
-  return [res.amount, res.gasUsed, res.account];
+const claimBetToken = async (core, account, betId) => {
+  let txClaim = await core.connect(account).claimBetToken(betId);
+  return txClaim;
 };
 
-const makeWithdrawLiquidityNative = async (lp, account, lpnft, percent) => {
-  let txWithdraw = await lp.connect(account).withdrawLiquidity(lpnft, percent, true);
+const makeWithdrawLiquidity = async (lp, account, lpnft, percent) => {
+  let txWithdraw = await lp.connect(account).withdrawLiquidity(lpnft, percent);
   let res = await getWithdrawLiquidityDetails(txWithdraw);
   return [res.amount, res.gasUsed, res.account];
 };
 
 const makeWithdrawPayout = async (lp, core, account, tokenId) => {
-  let txPayOut = await lp.connect(account).withdrawPayout(core.address, tokenId, false);
+  let txPayOut = await lp.connect(account).withdrawPayout(core.address, tokenId);
   let res = await getWithdrawPayoutDetails(txPayOut);
   return [res.amount, res.gasUsed, res.account];
 };
 
-const makeWithdrawPayoutNative = async (lp, core, account, tokenId) => {
-  let txPayOut = await lp.connect(account).withdrawPayout(core.address, tokenId, true);
-  let res = await getWithdrawPayoutDetails(txPayOut);
-  return [res.amount, res.gasUsed, res.account];
-};
-
-const claimAffiliateReward = async (lp, affiliate, core, dataParam) => {
-  let tx = await lp["claimAffiliateRewardFor(address,bytes,address)"](core.address, dataParam, affiliate.address);
-  let res = await getClaimAffiliateRewardDetails(tx);
-  return { affiliate: res.affiliate, amount: res.amount };
-};
-
-const getClaimParams = (start, count) => {
-  return abiCoder.encode(
-    ["tuple(uint256 start,uint256 count) affiliateParams"],
-    [
-      {
-        start: start,
-        count: count,
-      },
-    ]
-  );
-};
-
-const getClaimParamsDef = () => {
-  return getClaimParams(0, 0);
+const getValueOrZero = (value) => {
+  return value == undefined ? BigNumber.from(0) : value;
 };
 
 function initFixtureTree(provider) {
@@ -748,46 +769,48 @@ module.exports = {
   getTimeout,
   timeShift,
   timeShiftBy,
+  blockShiftBy,
   tokens,
+  addLiquidity,
   getTokenId,
   getTokenIdOdds,
   getTokenIdDetails,
+  getLiveBetDetails,
   getWithdrawLiquidityDetails,
   getWithdrawPayoutDetails,
   getLPNFTToken,
   getWinthdrawnAmount,
   getWithdrawPayoutDetails,
-  getLPNFTTokenDetails,
+  getLPNFTDetails,
   getPluggedCore,
   getCreatePoolDetails,
   deployContracts,
   createFactory,
   createPool,
   prepareStand,
-  prepareStandNativeLiquidity,
   prepareEmptyStand,
   addRole,
   bindRoles,
   grantRole,
   prepareRoles,
-  prepareFreeBetRoles,
+  prepareLiveCoreRoles,
   prepareAccess,
   calcGas,
+  calcCashout,
   createGame,
   createCondition,
   encodeBetData,
-  makeAddLiquidityNative,
-  makeBetNativeGetTokenId,
   makeBetGetTokenId,
   makeBetGetTokenIdOdds,
+  makeBetLiveGetTokenId,
+  claimBetToken,
   makeWithdrawPayout,
-  makeWithdrawPayoutNative,
   makeWithdrawLiquidity,
-  makeWithdrawLiquidityNative,
+  plugLiveCore,
   plugExpress,
-  claimAffiliateReward,
-  getClaimParams,
-  getClaimParamsDef,
+  getClaimBetTokenDetails,
+  getValueOrZero,
+  nextBatch,
   initFixtureTree,
   switchCore,
   changeReinforcementAbility,

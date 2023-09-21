@@ -1,7 +1,6 @@
 const { expect } = require("chai");
 const { ethers } = require("hardhat");
 const {
-  deployContracts,
   getBlockTime,
   tokens,
   createGame,
@@ -28,7 +27,7 @@ const createCondition = async (
 ) => {
   await safeOracle
     .connect(oracle)
-    .createCondition(core.address, gameId, condId, pools, outcomes, reinforcement, margin, proposeDeadline);
+    .createCondition(core.address, gameId, condId, pools, outcomes, reinforcement, margin, 1, proposeDeadline);
 };
 
 const LIQUIDITY = tokens(200000);
@@ -37,7 +36,6 @@ const INSURANCE = tokens(100).sub(1); // an odd INSURANCE value may cause additi
 const OUTCOMEWIN = 1;
 const OUTCOMELOSE = 2;
 const OUTCOMEINCORRECT = 3;
-const IPFS = ethers.utils.formatBytes32String("ipfs");
 
 const MULTIPLIER = 1e12;
 
@@ -52,7 +50,6 @@ describe("🛡️ SafeOracle test", function () {
   const minDepo = tokens(10);
   const daoFee = MULTIPLIER * 0.09; // 9%
   const dataProviderFee = MULTIPLIER * 0.01; // 1%
-  const affiliateFee = MULTIPLIER * 0.33; // 33%
 
   const pool1 = 5000000;
   const pool2 = 5000000;
@@ -61,7 +58,7 @@ describe("🛡️ SafeOracle test", function () {
 
   let dao, poolOwner, dataProvider, oracle, oracle2, maintainer, affiliate, bettor, disputer;
   let SafeOracle;
-  let factory, access, core, azuroBet, wxDAI, affiliateHelper, lp, safeOracle;
+  let factory, access, core, azuroBet, wxDAI, lp, safeOracle;
   let decisionPeriod;
   let roleIds, time, balance;
 
@@ -72,7 +69,7 @@ describe("🛡️ SafeOracle test", function () {
     [dao, poolOwner, dataProvider, oracle, oracle2, maintainer, bettor, affiliate, disputer] =
       await ethers.getSigners();
 
-    ({ factory, access, core, azuroBet, wxDAI, affiliateHelper, lp, roleIds } = await prepareStand(
+    ({ factory, access, core, azuroBet, wxDAI, lp, roleIds } = await prepareStand(
       ethers,
       dao,
       poolOwner,
@@ -81,7 +78,6 @@ describe("🛡️ SafeOracle test", function () {
       minDepo,
       daoFee,
       dataProviderFee,
-      affiliateFee,
       LIQUIDITY
     ));
     await prepareAccess(access, poolOwner, oracle.address, oracle2.address, maintainer.address, roleIds);
@@ -113,7 +109,7 @@ describe("🛡️ SafeOracle test", function () {
     }
 
     time = await getBlockTime(ethers);
-    await createGame(lp, oracle, ++gameId, IPFS, time + ONE_HOUR);
+    await createGame(lp, oracle, ++gameId, time + ONE_HOUR);
   });
   describe("Common use cases", function () {
     beforeEach(async function () {
@@ -136,15 +132,17 @@ describe("🛡️ SafeOracle test", function () {
 
       const condition = await core.getCondition(condId);
       expect(condition.gameId).to.be.equal(gameId);
-      expect(condition.funds[0]).to.be.equal(REINFORCEMENT);
-      expect(condition.funds[1]).to.be.equal(REINFORCEMENT);
-      expect(condition.outcomes[0]).to.be.equal(OUTCOMEWIN);
-      expect(condition.outcomes[1]).to.be.equal(OUTCOMELOSE);
+      expect(condition.reinforcement).to.be.equal(REINFORCEMENT);
       expect(condition.margin).to.be.equal(MARGINALITY);
+      expect(condition.winningOutcomesCount).to.be.equal(1);
+      expect(await core.outcomeNumbers(condId, [OUTCOMEWIN])).to.be.equal(1); // outcomeIndex (0) + 1
+      expect(await core.outcomeNumbers(condId, OUTCOMELOSE)).to.be.equal(2); // outcomeIndex (1) + 1
     });
     it("Oracle creates condition and fully pays for the insurance from the balance remaining in the contract", async () => {
       await timeShift(time + ONE_HOUR + ONE_MINUTE);
-      await safeOracle.connect(oracle)["resolveCondition(address,uint256,uint64)"](core.address, condId, OUTCOMEWIN);
+      await safeOracle
+        .connect(oracle)
+        ["resolveCondition(address,uint256,uint64[])"](core.address, condId, [OUTCOMEWIN]);
 
       time = await getBlockTime(ethers);
       await timeShift(time + DISPUTE_PERIOD);
@@ -152,7 +150,7 @@ describe("🛡️ SafeOracle test", function () {
       expect(await safeOracle.balanceOf(oracle.address)).to.be.equal(INSURANCE);
 
       time = await getBlockTime(ethers);
-      await createGame(lp, oracle, ++gameId, IPFS, time + ONE_HOUR);
+      await createGame(lp, oracle, ++gameId, time + ONE_HOUR);
       await createCondition(
         safeOracle,
         oracle,
@@ -171,7 +169,9 @@ describe("🛡️ SafeOracle test", function () {
     });
     it("Oracle creates condition and pays a part of the insurance from the balance remaining in the contract", async () => {
       await timeShift(time + ONE_HOUR + ONE_MINUTE);
-      await safeOracle.connect(oracle)["resolveCondition(address,uint256,uint64)"](core.address, condId, OUTCOMEWIN);
+      await safeOracle
+        .connect(oracle)
+        ["resolveCondition(address,uint256,uint64[])"](core.address, condId, [OUTCOMEWIN]);
 
       time = await getBlockTime(ethers);
       await timeShift(time + DISPUTE_PERIOD);
@@ -184,7 +184,7 @@ describe("🛡️ SafeOracle test", function () {
       expect(await safeOracle.balanceOf(oracle.address)).to.be.equal(INSURANCE.sub(withdrawAmount));
 
       time = await getBlockTime(ethers);
-      await createGame(lp, oracle, ++gameId, IPFS, time + ONE_HOUR);
+      await createGame(lp, oracle, ++gameId, time + ONE_HOUR);
       await createCondition(
         safeOracle,
         oracle,
@@ -242,7 +242,9 @@ describe("🛡️ SafeOracle test", function () {
       expect(condition.state).to.be.equal(0 /* CREATED */);
 
       await timeShift(time + ONE_HOUR + ONE_MINUTE);
-      await safeOracle.connect(oracle)["resolveCondition(address,uint256,uint64)"](core.address, condId, OUTCOMEWIN);
+      await safeOracle
+        .connect(oracle)
+        ["resolveCondition(address,uint256,uint64[])"](core.address, condId, [OUTCOMEWIN]);
 
       time = await getBlockTime(ethers);
       await timeShift(time + DISPUTE_PERIOD);
@@ -250,14 +252,11 @@ describe("🛡️ SafeOracle test", function () {
 
       condition = await core.getCondition(condId);
       expect(condition.state).to.be.equal(1 /* RESOLVED */);
-      expect(condition.outcomeWin).to.be.equal(OUTCOMEWIN);
+      expect(await core.isOutcomeWinning(condId, OUTCOMEWIN)).to.be.equal(true);
     });
     it("Oracle provides 'resolve' solution of 2 conditions with the same id  in different cores that accepted without dispute", async () => {
       const PrematchCore = await ethers.getContractFactory("PrematchCore", {
         signer: poolOwner,
-        libraries: {
-          AffiliateHelper: affiliateHelper.address,
-        },
         unsafeAllowCustomTypes: true,
       });
 
@@ -286,7 +285,9 @@ describe("🛡️ SafeOracle test", function () {
         expect(condition.state).to.be.equal(0 /* CREATED */);
 
         await timeShift(time + ONE_HOUR + ONE_MINUTE);
-        await safeOracle.connect(oracle)["resolveCondition(address,uint256,uint64)"](_core.address, condId, OUTCOMEWIN);
+        await safeOracle
+          .connect(oracle)
+          ["resolveCondition(address,uint256,uint64[])"](_core.address, condId, [OUTCOMEWIN]);
 
         time = await getBlockTime(ethers);
         await timeShift(time + DISPUTE_PERIOD);
@@ -294,40 +295,42 @@ describe("🛡️ SafeOracle test", function () {
 
         condition = await _core.getCondition(condId);
         expect(condition.state).to.be.equal(1 /* RESOLVED */);
-        expect(condition.outcomeWin).to.be.equal(OUTCOMEWIN);
+        expect(await core.isOutcomeWinning(condId, OUTCOMEWIN)).to.be.equal(true);
       }
     });
     it("Oracle provides no solution inside of a resolve period so the DAO resolves the condition", async () => {
       await timeShift(time + ONE_DAY);
-      await safeOracle.connect(dao)["resolveCondition(address,uint256,uint64)"](core.address, condId, OUTCOMEWIN);
+      await safeOracle.connect(dao)["resolveCondition(address,uint256,uint64[])"](core.address, condId, [OUTCOMEWIN]);
       expect(await safeOracle.balanceOf(oracle.address)).to.be.equal(0);
       expect(await safeOracle.balanceOf(dao.address)).to.be.equal(INSURANCE);
 
       const condition = await core.getCondition(condId);
       expect(condition.state).to.be.equal(1 /* RESOLVED */);
-      expect(condition.outcomeWin).to.be.equal(OUTCOMEWIN);
+      expect(await core.isOutcomeWinning(condId, OUTCOMEWIN)).to.be.equal(true);
     });
     it("Oracle provides solution that can't be executed so the DAO resolves the condition", async () => {
       await timeShift(time + ONE_HOUR + ONE_MINUTE);
       await safeOracle
         .connect(oracle)
-        ["resolveCondition(address,uint256,uint64)"](core.address, condId, OUTCOMEINCORRECT);
+        ["resolveCondition(address,uint256,uint64[])"](core.address, condId, [OUTCOMEINCORRECT]);
 
       time = await getBlockTime(ethers);
       await timeShift(time + DISPUTE_PERIOD);
       await safeOracle.connect(bettor).applyProposal(core.address, condId);
 
-      await safeOracle.connect(dao)["resolveCondition(address,uint256,uint64)"](core.address, condId, OUTCOMEWIN);
+      await safeOracle.connect(dao)["resolveCondition(address,uint256,uint64[])"](core.address, condId, [OUTCOMEWIN]);
       expect(await safeOracle.balanceOf(oracle.address)).to.be.equal(0);
       expect(await safeOracle.balanceOf(dao.address)).to.be.equal(INSURANCE);
 
       const condition = await core.getCondition(condId);
       expect(condition.state).to.be.equal(1 /* RESOLVED */);
-      expect(condition.outcomeWin).to.be.equal(OUTCOMEWIN);
+      expect(await core.isOutcomeWinning(condId, OUTCOMEWIN)).to.be.equal(true);
     });
     it("Oracle provides solution and cancels condition in dispute period", async () => {
       await timeShift(time + ONE_HOUR + ONE_MINUTE);
-      await safeOracle.connect(oracle)["resolveCondition(address,uint256,uint64)"](core.address, condId, OUTCOMEWIN);
+      await safeOracle
+        .connect(oracle)
+        ["resolveCondition(address,uint256,uint64[])"](core.address, condId, [OUTCOMEWIN]);
 
       await core.connect(oracle).cancelCondition(condId);
       await safeOracle.connect(bettor).handleCanceledCondition(core.address, condId);
@@ -337,7 +340,9 @@ describe("🛡️ SafeOracle test", function () {
     });
     it("Oracle provides solution and cancels condition after dispute starts", async () => {
       await timeShift(time + ONE_HOUR + ONE_MINUTE);
-      await safeOracle.connect(oracle)["resolveCondition(address,uint256,uint64)"](core.address, condId, OUTCOMEWIN);
+      await safeOracle
+        .connect(oracle)
+        ["resolveCondition(address,uint256,uint64[])"](core.address, condId, [OUTCOMEWIN]);
 
       await safeOracle.connect(disputer).dispute(core.address, condId);
       await core.connect(oracle).cancelCondition(condId);
@@ -349,7 +354,9 @@ describe("🛡️ SafeOracle test", function () {
     });
     it("Oracle provides solution and cancels condition after dispute period", async () => {
       await timeShift(time + ONE_HOUR + ONE_MINUTE);
-      await safeOracle.connect(oracle)["resolveCondition(address,uint256,uint64)"](core.address, condId, OUTCOMEWIN);
+      await safeOracle
+        .connect(oracle)
+        ["resolveCondition(address,uint256,uint64[])"](core.address, condId, [OUTCOMEWIN]);
 
       await core.connect(oracle).cancelCondition(condId);
       time = await getBlockTime(ethers);
@@ -386,7 +393,9 @@ describe("🛡️ SafeOracle test", function () {
     });
     it("Oracle claims its balance", async () => {
       await timeShift(time + ONE_HOUR + ONE_MINUTE);
-      await safeOracle.connect(oracle)["resolveCondition(address,uint256,uint64)"](core.address, condId, OUTCOMEWIN);
+      await safeOracle
+        .connect(oracle)
+        ["resolveCondition(address,uint256,uint64[])"](core.address, condId, [OUTCOMEWIN]);
 
       time = await getBlockTime(ethers);
       await timeShift(time + DISPUTE_PERIOD);
@@ -403,25 +412,25 @@ describe("🛡️ SafeOracle test", function () {
       await timeShift(time + ONE_HOUR + ONE_MINUTE);
       await safeOracle
         .connect(oracle)
-        ["resolveCondition(address,uint256,uint64)"](core.address, condId, OUTCOMEINCORRECT);
+        ["resolveCondition(address,uint256,uint64[])"](core.address, condId, [OUTCOMEINCORRECT]);
       await safeOracle.connect(disputer).dispute(core.address, condId);
       expect(await wxDAI.balanceOf(disputer.address)).to.be.equal(disputerBalance.sub(INSURANCE.div(2)));
 
-      await safeOracle.connect(dao)["resolveCondition(address,uint256,uint64)"](core.address, condId, OUTCOMEWIN);
+      await safeOracle.connect(dao)["resolveCondition(address,uint256,uint64[])"](core.address, condId, [OUTCOMEWIN]);
       expect(await safeOracle.balanceOf(oracle.address)).to.be.equal(0);
       expect(await safeOracle.balanceOf(disputer.address)).to.be.equal(INSURANCE);
       expect(await safeOracle.balanceOf(dao.address)).to.be.equal(INSURANCE.div(2));
 
       const condition = await core.getCondition(condId);
       expect(condition.state).to.be.equal(1 /* RESOLVED */);
-      expect(condition.outcomeWin).to.be.equal(OUTCOMEWIN);
+      expect(await core.isOutcomeWinning(condId, OUTCOMEWIN)).to.be.equal(true);
     });
     it("The DAO satisfies dispute with canceling condition", async () => {
       const disputerBalance = await wxDAI.balanceOf(disputer.address);
       await timeShift(time + ONE_HOUR + ONE_MINUTE);
       await safeOracle
         .connect(oracle)
-        ["resolveCondition(address,uint256,uint64)"](core.address, condId, OUTCOMEINCORRECT);
+        ["resolveCondition(address,uint256,uint64[])"](core.address, condId, [OUTCOMEINCORRECT]);
       await safeOracle.connect(disputer).dispute(core.address, condId);
       expect(await wxDAI.balanceOf(disputer.address)).to.be.equal(disputerBalance.sub(INSURANCE.div(2)));
 
@@ -435,7 +444,9 @@ describe("🛡️ SafeOracle test", function () {
     });
     it("The DAO rejects dispute", async () => {
       await timeShift(time + ONE_HOUR + ONE_MINUTE);
-      await safeOracle.connect(oracle)["resolveCondition(address,uint256,uint64)"](core.address, condId, OUTCOMEWIN);
+      await safeOracle
+        .connect(oracle)
+        ["resolveCondition(address,uint256,uint64[])"](core.address, condId, [OUTCOMEWIN]);
       await safeOracle.connect(disputer).dispute(core.address, condId);
 
       await safeOracle.connect(dao).approve(core.address, condId);
@@ -445,7 +456,7 @@ describe("🛡️ SafeOracle test", function () {
 
       const condition = await core.getCondition(condId);
       expect(condition.state).to.be.equal(1 /* RESOLVED */);
-      expect(condition.outcomeWin).to.be.equal(OUTCOMEWIN);
+      expect(await core.isOutcomeWinning(condId, OUTCOMEWIN)).to.be.equal(true);
     });
     it("The DAO rejects dispute after changing dispute period", async () => {
       const disputePeriod = 900;
@@ -465,7 +476,9 @@ describe("🛡️ SafeOracle test", function () {
       );
 
       await timeShift(time + ONE_HOUR + ONE_MINUTE);
-      await safeOracle.connect(oracle)["resolveCondition(address,uint256,uint64)"](core.address, condId, OUTCOMEWIN);
+      await safeOracle
+        .connect(oracle)
+        ["resolveCondition(address,uint256,uint64[])"](core.address, condId, [OUTCOMEWIN]);
 
       time = await getBlockTime(ethers);
       await timeShift(time + disputePeriod - 10);
@@ -478,11 +491,13 @@ describe("🛡️ SafeOracle test", function () {
 
       const condition = await core.getCondition(condId);
       expect(condition.state).to.be.equal(1 /* RESOLVED */);
-      expect(condition.outcomeWin).to.be.equal(OUTCOMEWIN);
+      expect(await core.isOutcomeWinning(condId, OUTCOMEWIN)).to.be.equal(true);
     });
     it("The DAO does not resolve dispute inside of the decision period so condition is canceled", async () => {
       await timeShift(time + ONE_HOUR + ONE_MINUTE);
-      await safeOracle.connect(oracle)["resolveCondition(address,uint256,uint64)"](core.address, condId, OUTCOMEWIN);
+      await safeOracle
+        .connect(oracle)
+        ["resolveCondition(address,uint256,uint64[])"](core.address, condId, [OUTCOMEWIN]);
       await safeOracle.connect(disputer).dispute(core.address, condId);
 
       time = await getBlockTime(ethers);
@@ -499,7 +514,7 @@ describe("🛡️ SafeOracle test", function () {
       await timeShift(time + ONE_HOUR + ONE_MINUTE);
       await safeOracle
         .connect(oracle)
-        ["resolveCondition(address,uint256,uint64)"](core.address, condId, OUTCOMEINCORRECT);
+        ["resolveCondition(address,uint256,uint64[])"](core.address, condId, [OUTCOMEINCORRECT]);
 
       time = await getBlockTime(ethers);
       await timeShift(time + DISPUTE_PERIOD);
@@ -522,7 +537,7 @@ describe("🛡️ SafeOracle test", function () {
       await timeShift(time + ONE_HOUR + ONE_MINUTE);
       await safeOracle
         .connect(oracle)
-        ["resolveCondition(address,uint256,uint64)"](core.address, condId, OUTCOMEINCORRECT);
+        ["resolveCondition(address,uint256,uint64[])"](core.address, condId, [OUTCOMEINCORRECT]);
       await safeOracle.connect(disputer).dispute(core.address, condId);
 
       time = await getBlockTime(ethers);
@@ -552,10 +567,14 @@ describe("🛡️ SafeOracle test", function () {
           "ConditionNotExists"
         );
         await expect(
-          safeOracle.connect(dao)["resolveCondition(address,uint256,uint64)"](core.address, incorrectCondId, OUTCOMEWIN)
+          safeOracle
+            .connect(dao)
+            ["resolveCondition(address,uint256,uint64[])"](core.address, incorrectCondId, [OUTCOMEWIN])
         ).to.be.revertedWithCustomError(core, "ConditionNotExists");
         await expect(
-          safeOracle.connect(dao)["resolveCondition(address,uint256,uint64)"](core.address, incorrectCondId, OUTCOMEWIN)
+          safeOracle
+            .connect(dao)
+            ["resolveCondition(address,uint256,uint64[])"](core.address, incorrectCondId, [OUTCOMEWIN])
         ).to.be.revertedWithCustomError(core, "ConditionNotExists");
         await expect(safeOracle.connect(dao).dispute(core.address, incorrectCondId)).to.be.revertedWithCustomError(
           core,
@@ -615,19 +634,15 @@ describe("🛡️ SafeOracle test", function () {
         ).to.be.revertedWith("TransferHelper::transferFrom: transferFrom failed");
       });
       it("Condition CAN NOT be created on a core that doesn't belong to the Factory", async () => {
-        const { affiliateHelper } = await deployContracts(ethers, dao);
         const PrematchCore = await ethers.getContractFactory("PrematchCore", {
           signer: poolOwner,
-          libraries: {
-            AffiliateHelper: affiliateHelper.address,
-          },
           unsafeAllowCustomTypes: true,
         });
         const core2 = await upgrades.deployProxy(PrematchCore, [azuroBet.address, lp.address], {
           unsafeAllowLinkedLibraries: true,
         });
 
-        await bindRoles(access, poolOwner, [{ target: core2.address, selector: "0xc6600c7c", roleId: roleIds.oracle }]);
+        await bindRoles(access, poolOwner, [{ target: core2.address, selector: "0xa08be625", roleId: roleIds.oracle }]);
 
         await expect(
           createCondition(
@@ -675,7 +690,7 @@ describe("🛡️ SafeOracle test", function () {
       it("Condition CAN NOT be created if it is already created directly through the core", async () => {
         await core
           .connect(oracle)
-          .createCondition(gameId, ++condId, [pool2, pool1], [OUTCOMEWIN, OUTCOMELOSE], REINFORCEMENT, MARGINALITY);
+          .createCondition(gameId, ++condId, [pool2, pool1], [OUTCOMEWIN, OUTCOMELOSE], REINFORCEMENT, MARGINALITY, 1);
         await expect(
           createCondition(
             safeOracle,
@@ -712,7 +727,7 @@ describe("🛡️ SafeOracle test", function () {
       it("Solution CAN NOT be proposed by an oracle outside of the resolve period", async () => {
         await timeShift(time + ONE_DAY);
         await expect(
-          safeOracle.connect(oracle)["resolveCondition(address,uint256,uint64)"](core.address, condId, OUTCOMEWIN)
+          safeOracle.connect(oracle)["resolveCondition(address,uint256,uint64[])"](core.address, condId, [OUTCOMEWIN])
         ).to.be.revertedWithCustomError(safeOracle, "CantPropose");
       });
       it("Solution CAN NOT be proposed by an oracle other than the one that created it", async () => {
@@ -720,14 +735,16 @@ describe("🛡️ SafeOracle test", function () {
         await wxDAI.connect(oracle2).approve(safeOracle.address, INSURANCE);
 
         await expect(
-          safeOracle.connect(oracle2)["resolveCondition(address,uint256,uint64)"](core.address, condId, OUTCOMEWIN)
+          safeOracle.connect(oracle2)["resolveCondition(address,uint256,uint64[])"](core.address, condId, [OUTCOMEWIN])
         ).to.be.revertedWithCustomError(safeOracle, "OnlyOracle");
       });
       it("Solution CAN NOT be proposed twice", async () => {
-        await safeOracle.connect(oracle)["resolveCondition(address,uint256,uint64)"](core.address, condId, OUTCOMEWIN);
+        await safeOracle
+          .connect(oracle)
+          ["resolveCondition(address,uint256,uint64[])"](core.address, condId, [OUTCOMEWIN]);
 
         await expect(
-          safeOracle.connect(oracle)["resolveCondition(address,uint256,uint64)"](core.address, condId, OUTCOMEWIN)
+          safeOracle.connect(oracle)["resolveCondition(address,uint256,uint64[])"](core.address, condId, [OUTCOMEWIN])
         ).to.be.revertedWithCustomError(safeOracle, "CantPropose");
       });
       it("Solution CAN NOT be proposed if condition is canceled", async () => {
@@ -744,7 +761,9 @@ describe("🛡️ SafeOracle test", function () {
         );
       });
       it("Solution CAN NOT be accepted inside of the dispute period", async () => {
-        await safeOracle.connect(oracle)["resolveCondition(address,uint256,uint64)"](core.address, condId, OUTCOMEWIN);
+        await safeOracle
+          .connect(oracle)
+          ["resolveCondition(address,uint256,uint64[])"](core.address, condId, [OUTCOMEWIN]);
 
         time = await getBlockTime(ethers);
         await timeShift(time + DISPUTE_PERIOD - ONE_MINUTE);
@@ -754,7 +773,9 @@ describe("🛡️ SafeOracle test", function () {
         );
       });
       it("Solution CAN NOT be accepted inside of the decision period if it is disputed", async () => {
-        await safeOracle.connect(oracle)["resolveCondition(address,uint256,uint64)"](core.address, condId, OUTCOMEWIN);
+        await safeOracle
+          .connect(oracle)
+          ["resolveCondition(address,uint256,uint64[])"](core.address, condId, [OUTCOMEWIN]);
         await safeOracle.connect(disputer).dispute(core.address, condId);
 
         time = await getBlockTime(ethers);
@@ -765,7 +786,9 @@ describe("🛡️ SafeOracle test", function () {
         );
       });
       it("Solution CAN NOT be accepted twice for the same condition", async () => {
-        await safeOracle.connect(oracle)["resolveCondition(address,uint256,uint64)"](core.address, condId, OUTCOMEWIN);
+        await safeOracle
+          .connect(oracle)
+          ["resolveCondition(address,uint256,uint64[])"](core.address, condId, [OUTCOMEWIN]);
 
         time = await getBlockTime(ethers);
         await timeShift(time + DISPUTE_PERIOD);
@@ -776,7 +799,9 @@ describe("🛡️ SafeOracle test", function () {
         );
       });
       it("Solution CAN NOT be accepted if condition is canceled", async () => {
-        await safeOracle.connect(oracle)["resolveCondition(address,uint256,uint64)"](core.address, condId, OUTCOMEWIN);
+        await safeOracle
+          .connect(oracle)
+          ["resolveCondition(address,uint256,uint64[])"](core.address, condId, [OUTCOMEWIN]);
         await core.connect(oracle).cancelCondition(condId);
 
         time = await getBlockTime(ethers);
@@ -803,7 +828,9 @@ describe("🛡️ SafeOracle test", function () {
         );
 
         await timeShift(time + ONE_HOUR + ONE_MINUTE);
-        await safeOracle.connect(oracle)["resolveCondition(address,uint256,uint64)"](core.address, condId, OUTCOMEWIN);
+        await safeOracle
+          .connect(oracle)
+          ["resolveCondition(address,uint256,uint64[])"](core.address, condId, [OUTCOMEWIN]);
 
         time = await getBlockTime(ethers);
       });
@@ -814,7 +841,7 @@ describe("🛡️ SafeOracle test", function () {
         );
       });
       it("Dispute CAN NOT be opened for a condition that don't have a proposed solution", async () => {
-        await createGame(lp, oracle, ++gameId, IPFS, time + ONE_HOUR);
+        await createGame(lp, oracle, ++gameId, time + ONE_HOUR);
 
         await createCondition(
           safeOracle,
@@ -881,7 +908,9 @@ describe("🛡️ SafeOracle test", function () {
       });
       it("Condition solution CAN be approved only by the DAO", async () => {
         await timeShift(time + ONE_HOUR + ONE_MINUTE);
-        await safeOracle.connect(oracle)["resolveCondition(address,uint256,uint64)"](core.address, condId, OUTCOMEWIN);
+        await safeOracle
+          .connect(oracle)
+          ["resolveCondition(address,uint256,uint64[])"](core.address, condId, [OUTCOMEWIN]);
         await safeOracle.connect(disputer).dispute(core.address, condId);
 
         await expect(safeOracle.connect(oracle).approve(core.address, condId)).to.be.revertedWith(
@@ -897,57 +926,69 @@ describe("🛡️ SafeOracle test", function () {
       });
       it("Condition CAN NOT be resolved by the DAO during a resolve period if it is not disputed", async () => {
         await expect(
-          safeOracle.connect(dao)["resolveCondition(address,uint256,uint64)"](core.address, condId, OUTCOMEWIN)
+          safeOracle.connect(dao)["resolveCondition(address,uint256,uint64[])"](core.address, condId, [OUTCOMEWIN])
         ).to.be.revertedWithCustomError(safeOracle, "CantResolve");
       });
       it("Condition CAN NOT be resolved by the DAO after decision period if it is not disputed", async () => {
         await timeShift(time + ONE_DAY + decisionPeriod);
         await expect(
-          safeOracle.connect(dao)["resolveCondition(address,uint256,uint64)"](core.address, condId, OUTCOMEWIN)
+          safeOracle.connect(dao)["resolveCondition(address,uint256,uint64[])"](core.address, condId, [OUTCOMEWIN])
         ).to.be.revertedWithCustomError(safeOracle, "CantResolve");
       });
       it("Condition CAN NOT be resolved by the DAO with the same solution that is already proposed", async () => {
         await timeShift(time + ONE_HOUR + ONE_MINUTE);
-        await safeOracle.connect(oracle)["resolveCondition(address,uint256,uint64)"](core.address, condId, OUTCOMEWIN);
+        await safeOracle
+          .connect(oracle)
+          ["resolveCondition(address,uint256,uint64[])"](core.address, condId, [OUTCOMEWIN]);
         await safeOracle.connect(disputer).dispute(core.address, condId);
 
         await expect(
-          safeOracle.connect(dao)["resolveCondition(address,uint256,uint64)"](core.address, condId, OUTCOMEWIN)
+          safeOracle.connect(dao)["resolveCondition(address,uint256,uint64[])"](core.address, condId, [OUTCOMEWIN])
         ).to.be.revertedWithCustomError(safeOracle, "SameSolutionAsProposed");
       });
       it("Condition CAN NOT be resolved by the DAO with solution that CAN NOT be executed", async () => {
         await timeShift(time + ONE_HOUR + ONE_MINUTE);
-        await safeOracle.connect(oracle)["resolveCondition(address,uint256,uint64)"](core.address, condId, OUTCOMEWIN);
+        await safeOracle
+          .connect(oracle)
+          ["resolveCondition(address,uint256,uint64[])"](core.address, condId, [OUTCOMEWIN]);
         await safeOracle.connect(disputer).dispute(core.address, condId);
 
         await expect(
-          safeOracle.connect(dao)["resolveCondition(address,uint256,uint64)"](core.address, condId, OUTCOMEINCORRECT)
+          safeOracle
+            .connect(dao)
+            ["resolveCondition(address,uint256,uint64[])"](core.address, condId, [OUTCOMEINCORRECT])
         ).to.be.revertedWithCustomError(safeOracle, "IncorrectSolution");
       });
       it("Condition CAN NOT be resolved twice", async () => {
         await timeShift(time + ONE_HOUR + ONE_MINUTE);
-        await safeOracle.connect(oracle)["resolveCondition(address,uint256,uint64)"](core.address, condId, OUTCOMELOSE);
+        await safeOracle
+          .connect(oracle)
+          ["resolveCondition(address,uint256,uint64[])"](core.address, condId, [OUTCOMELOSE]);
         await safeOracle.connect(disputer).dispute(core.address, condId);
 
-        await safeOracle.connect(dao)["resolveCondition(address,uint256,uint64)"](core.address, condId, OUTCOMEWIN);
+        await safeOracle.connect(dao)["resolveCondition(address,uint256,uint64[])"](core.address, condId, [OUTCOMEWIN]);
         await expect(
-          safeOracle.connect(dao)["resolveCondition(address,uint256,uint64)"](core.address, condId, OUTCOMEWIN)
+          safeOracle.connect(dao)["resolveCondition(address,uint256,uint64[])"](core.address, condId, [OUTCOMEWIN])
         ).to.be.revertedWithCustomError(safeOracle, "CantResolve");
       });
       it("Condition CAN NOT be resolved through direct call to core contract", async () => {
         await timeShift(time + ONE_HOUR + ONE_MINUTE);
-        await expect(core.connect(oracle)["resolveCondition(uint256,uint64)"](condId, OUTCOMEWIN))
+        await expect(core.connect(oracle)["resolveCondition(uint256,uint64[])"](condId, [OUTCOMEWIN]))
           .to.be.revertedWithCustomError(core, "OnlyOracle")
           .withArgs(safeOracle.address);
       });
       it("Condition CAN NOT be resolved by the DAO if it is canceled", async () => {
         await timeShift(time + ONE_HOUR + ONE_MINUTE);
-        await safeOracle.connect(oracle)["resolveCondition(address,uint256,uint64)"](core.address, condId, OUTCOMEWIN);
+        await safeOracle
+          .connect(oracle)
+          ["resolveCondition(address,uint256,uint64[])"](core.address, condId, [OUTCOMEWIN]);
         await safeOracle.connect(disputer).dispute(core.address, condId);
 
         await core.connect(oracle).cancelCondition(condId);
         await expect(
-          safeOracle.connect(dao)["resolveCondition(address,uint256,uint64)"](core.address, condId, OUTCOMEINCORRECT)
+          safeOracle
+            .connect(dao)
+            ["resolveCondition(address,uint256,uint64[])"](core.address, condId, [OUTCOMEINCORRECT])
         ).to.be.revertedWithCustomError(safeOracle, "ConditionCanceled");
       });
     });
@@ -968,7 +1009,9 @@ describe("🛡️ SafeOracle test", function () {
       });
       it("Condition CAN NOT be canceled if the DAO provided solution", async () => {
         await timeShift(time + ONE_HOUR + ONE_MINUTE);
-        await safeOracle.connect(oracle)["resolveCondition(address,uint256,uint64)"](core.address, condId, OUTCOMEWIN);
+        await safeOracle
+          .connect(oracle)
+          ["resolveCondition(address,uint256,uint64[])"](core.address, condId, [OUTCOMEWIN]);
         await safeOracle.connect(disputer).dispute(core.address, condId);
         await safeOracle.connect(dao).approve(core.address, condId);
 
@@ -988,7 +1031,9 @@ describe("🛡️ SafeOracle test", function () {
       });
       it("Condition CAN NOT be canceled if the DAO didn't provided solution after dispute but (DISPUTE_PERIOD + decisionPeriod) is not passed", async () => {
         await timeShift(time + ONE_HOUR + ONE_MINUTE);
-        await safeOracle.connect(oracle)["resolveCondition(address,uint256,uint64)"](core.address, condId, OUTCOMEWIN);
+        await safeOracle
+          .connect(oracle)
+          ["resolveCondition(address,uint256,uint64[])"](core.address, condId, [OUTCOMEWIN]);
         await safeOracle.connect(disputer).dispute(core.address, condId);
 
         time = await getBlockTime(ethers);
@@ -1000,7 +1045,9 @@ describe("🛡️ SafeOracle test", function () {
       });
       it("Condition CAN NOT be canceled twice", async () => {
         await timeShift(time + ONE_HOUR + ONE_MINUTE);
-        await safeOracle.connect(oracle)["resolveCondition(address,uint256,uint64)"](core.address, condId, OUTCOMEWIN);
+        await safeOracle
+          .connect(oracle)
+          ["resolveCondition(address,uint256,uint64[])"](core.address, condId, [OUTCOMEWIN]);
         await safeOracle.connect(disputer).dispute(core.address, condId);
 
         time = await getBlockTime(ethers);
@@ -1034,7 +1081,9 @@ describe("🛡️ SafeOracle test", function () {
       });
       it("Condition CAN NOT be processed as canceled if it is already resolved", async () => {
         await timeShift(time + ONE_HOUR + ONE_MINUTE);
-        await safeOracle.connect(oracle)["resolveCondition(address,uint256,uint64)"](core.address, condId, OUTCOMELOSE);
+        await safeOracle
+          .connect(oracle)
+          ["resolveCondition(address,uint256,uint64[])"](core.address, condId, [OUTCOMELOSE]);
 
         time = await getBlockTime(ethers);
         await timeShift(time + DISPUTE_PERIOD);
@@ -1070,7 +1119,9 @@ describe("🛡️ SafeOracle test", function () {
         );
 
         await timeShift(time + ONE_HOUR + ONE_MINUTE);
-        await safeOracle.connect(oracle)["resolveCondition(address,uint256,uint64)"](core.address, condId, OUTCOMEWIN);
+        await safeOracle
+          .connect(oracle)
+          ["resolveCondition(address,uint256,uint64[])"](core.address, condId, [OUTCOMEWIN]);
 
         time = await getBlockTime(ethers);
         await timeShift(time + DISPUTE_PERIOD);
@@ -1106,7 +1157,9 @@ describe("🛡️ SafeOracle test", function () {
         );
 
         await timeShift(time + ONE_HOUR + ONE_MINUTE);
-        await safeOracle.connect(oracle)["resolveCondition(address,uint256,uint64)"](core.address, condId, OUTCOMEWIN);
+        await safeOracle
+          .connect(oracle)
+          ["resolveCondition(address,uint256,uint64[])"](core.address, condId, [OUTCOMEWIN]);
         await safeOracle.connect(dao).changeDisputePeriod(60);
 
         time = await getBlockTime(ethers);
@@ -1130,7 +1183,9 @@ describe("🛡️ SafeOracle test", function () {
         await safeOracle.connect(dao).changeInsurance(tokens(123));
 
         await timeShift(time + ONE_HOUR + ONE_MINUTE);
-        await safeOracle.connect(oracle)["resolveCondition(address,uint256,uint64)"](core.address, condId, OUTCOMEWIN);
+        await safeOracle
+          .connect(oracle)
+          ["resolveCondition(address,uint256,uint64[])"](core.address, condId, [OUTCOMEWIN]);
 
         time = await getBlockTime(ethers);
         await timeShift(time + DISPUTE_PERIOD);

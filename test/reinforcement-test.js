@@ -18,7 +18,6 @@ const { ITERATIONS, MULTIPLIER } = require("../utils/constants");
 const LIQUIDITY = tokens(20000);
 const OUTCOMEWIN = 1;
 const OUTCOMELOSE = 2;
-const IPFS = ethers.utils.formatBytes32String("ipfs");
 
 const ONE_MINUTE = 60;
 const ONE_HOUR = 3600;
@@ -30,7 +29,6 @@ describe("Reinforcement test", function () {
   const minDepo = tokens(10);
   const daoFee = MULTIPLIER * 0.09; // 9%
   const dataProviderFee = MULTIPLIER * 0.01; // 1%
-  const affiliateFee = MULTIPLIER * 0.33; // 33%
 
   const pool1 = 5000000;
   const pool2 = 5000000;
@@ -53,22 +51,15 @@ describe("Reinforcement test", function () {
       minDepo,
       daoFee,
       dataProviderFee,
-      affiliateFee,
       LIQUIDITY
     ));
     await prepareAccess(access, poolOwner, oracle.address, oracle2.address, maintainer.address, roleIds);
-
-    const LibraryMock = await ethers.getContractFactory("LibraryMock", {
-      signer: await ethers.getSigner(),
-    });
-    coreTools = await LibraryMock.deploy();
-    await coreTools.deployed();
 
     lockedBefore = await lp.lockedLiquidity();
   });
   beforeEach(async () => {
     time = await getBlockTime(ethers);
-    await createGame(lp, oracle, ++gameId, IPFS, time + ONE_HOUR);
+    await createGame(lp, oracle, ++gameId, time + ONE_HOUR);
   });
   it("Check if odds match allocated reinforcement", async function () {
     const verificationCondId = ++condId;
@@ -121,10 +112,15 @@ describe("Reinforcement test", function () {
         fundBanks[0].add(totalNetBets[1]).sub(payouts[1]),
         fundBanks[1].add(totalNetBets[0]).sub(payouts[0]),
       ];
-      const targetOdds = funds[0].add(funds[1].add(amount)).mul(MULTIPLIER).div(funds[outcomeIndex].add(amount));
-      core.connect(oracle).changeOdds(verificationCondId, [targetOdds.sub(MULTIPLIER), MULTIPLIER]);
 
-      expect(res.odds).to.be.equal(await core.calcOdds(verificationCondId, 0, OUTCOMEWIN));
+      const fund = funds[0].add(funds[1]).add(amount);
+      const targetOdds = [
+        fund.mul(MULTIPLIER).div(funds[outcomeIndex].add(amount)),
+        fund.mul(MULTIPLIER).div(funds[1 - outcomeIndex]),
+      ];
+      core.connect(oracle).changeOdds(verificationCondId, targetOdds);
+
+      expect(res.odds).to.be.closeTo(await core.calcOdds(verificationCondId, 0, [OUTCOMEWIN]), 100);
 
       fundBanks[outcomeIndex] = fundBanks[outcomeIndex].add(amount);
       totalNetBets[outcomeIndex] = totalNetBets[outcomeIndex].add(amount);
@@ -132,7 +128,7 @@ describe("Reinforcement test", function () {
     }
 
     timeShift(time + ONE_HOUR + ONE_MINUTE);
-    await core.connect(oracle).resolveCondition(condId, OUTCOMEWIN);
+    await core.connect(oracle).resolveCondition(condId, [OUTCOMEWIN]);
   });
   it("Common betting workflow", async function () {
     // Bets for different outcomes
@@ -240,8 +236,8 @@ describe("Reinforcement test", function () {
     expect((await lp.lockedLiquidity()).sub(lockedAmount)).to.equal(deltaPayout5.add(deltaPayout4));
 
     timeShift(time + ONE_HOUR + ONE_MINUTE);
-    await core.connect(oracle).resolveCondition(condId1, OUTCOMEWIN);
-    await core.connect(oracle).resolveCondition(condId2, OUTCOMEWIN);
+    await core.connect(oracle).resolveCondition(condId1, [OUTCOMEWIN]);
+    await core.connect(oracle).resolveCondition(condId2, [OUTCOMEWIN]);
 
     expect(await lp.lockedLiquidity()).to.equal(lockedBefore);
   });
@@ -293,7 +289,7 @@ describe("Reinforcement test", function () {
     }
 
     timeShift(time + ONE_HOUR + ONE_MINUTE);
-    await core.connect(oracle).resolveCondition(condId, OUTCOMEWIN);
+    await core.connect(oracle).resolveCondition(condId, [OUTCOMEWIN]);
 
     expect(await lp.getReserve()).to.be.gt(lpBefore.sub(reinforcement.div(2)));
   });
@@ -313,11 +309,11 @@ describe("Reinforcement test", function () {
       marginality
     );
 
-    await makeBetGetTokenId(lp, core, bettor, affiliate.address, condId1, tokens(10000), OUTCOMEWIN, time + 100, 0);
+    await makeBetGetTokenId(lp, core, bettor, affiliate.address, condId1, tokens(10000), [OUTCOMEWIN], time + 100, 0);
     // Lower reinforcement limit
     await changeReinforcementAbility(lp, core, poolOwner, MULTIPLIER / 10);
     await expect(
-      makeBetGetTokenId(lp, core, bettor, affiliate.address, condId1, tokens(10000), OUTCOMEWIN, time + 100, 0)
+      makeBetGetTokenId(lp, core, bettor, affiliate.address, condId1, tokens(10000), [OUTCOMEWIN], time + 100, 0)
     ).to.be.revertedWithCustomError(lp, "NotEnoughLiquidity");
     // Still accept bets not increasing locked reserves amount
     await makeBetGetTokenId(lp, core, bettor, affiliate.address, condId1, tokens(100), OUTCOMELOSE, time + 100, 0);
@@ -336,13 +332,13 @@ describe("Reinforcement test", function () {
     );
 
     await expect(
-      makeBetGetTokenId(lp, core, bettor, affiliate.address, condId2, tokens(100), OUTCOMEWIN, time + 100, 0)
+      makeBetGetTokenId(lp, core, bettor, affiliate.address, condId2, tokens(100), [OUTCOMEWIN], time + 100, 0)
     ).to.be.revertedWithCustomError(lp, "NotEnoughLiquidity");
 
     // Increase the limit back
     await changeReinforcementAbility(lp, core, poolOwner, MULTIPLIER / 2);
-    await makeBetGetTokenId(lp, core, bettor, affiliate.address, condId1, tokens(100000), OUTCOMEWIN, time + 100, 0);
-    await makeBetGetTokenId(lp, core, bettor, affiliate.address, condId2, tokens(100000), OUTCOMEWIN, time + 100, 0);
+    await makeBetGetTokenId(lp, core, bettor, affiliate.address, condId1, tokens(100000), [OUTCOMEWIN], time + 100, 0);
+    await makeBetGetTokenId(lp, core, bettor, affiliate.address, condId2, tokens(100000), [OUTCOMEWIN], time + 100, 0);
   });
   it("Cancel condition", async function () {
     const betAmount = tokens(100);

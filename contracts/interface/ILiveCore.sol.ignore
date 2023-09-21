@@ -1,0 +1,99 @@
+// SPDX-License-Identifier: GPL-3.0
+
+pragma solidity ^0.8.9;
+
+import "./ICoreBase.sol";
+
+interface ILiveCore is ICoreBase {
+    struct Batch {
+        uint128[2] snapshotFunds;
+        uint64[2] oddsRounded;
+        uint128 startBlock;
+        uint64[2] batchOdds; // batch executed odds
+        uint64 startTime;
+        mapping(uint256 => mapping(uint64 => BetsAmount)) outcomeOddsBets; // outcomeIndex -> minOdds -> BetsAmount
+    }
+
+    // Affiliate rewards by MerkleTree
+    struct AffRewards {
+        bytes32 merkleRoot;
+        uint128 rewards;
+        uint128 claimed;
+        mapping(address => bool) isClaimed;
+    }
+
+    struct BetGroup {
+        uint256 conditionId;
+        uint256 batchId;
+        uint64 minOdds;
+        uint8 outcomeIndex;
+    }
+
+    struct Bet {
+        address bettor;
+        uint128 amount;
+        bool isClaimed;
+    }
+
+    struct BetsAmount {
+        bool rejected;
+        uint128 amount;
+    }
+
+    struct BetsPayouts {
+        uint128[2] payouts;
+        uint128[2] totalNetBets;
+    }
+
+    struct AffContributionInput {
+        uint256 conditionId;
+        uint256 batchId;
+        uint256 betId;
+    }
+
+    struct LiveAffiliateParams {
+        uint256 rewardId;
+        bytes32[] merkleProof;
+        uint128 share;
+    }
+
+    event BatchLimitsChanged(
+        uint64 newbatchMinBlocks,
+        uint64 newbatchMaxBlocks
+    );
+
+    event NewLiveBet(
+        address indexed bettor,
+        address indexed affiliate,
+        uint256 indexed conditionId,
+        uint256 batchId,
+        uint256 betId,
+        uint64 outcomeId,
+        uint128 amount,
+        uint64 minOdds
+    );
+
+    event BatchRejected(uint256 conditionId, uint256 batchId);
+
+    event AffRewardsSet(
+        uint256 setNumber,
+        bytes32 merkleRoot,
+        uint128 rewardsToDistribute
+    );
+
+    error BetRejected();
+    error MinBlocksNotPassed();
+    error IncorrectBatchLimits();
+    error DisputePassed();
+    error AlreadyClaimed();
+    error InvalidProof();
+    error IncorrectRewardId();
+    error NoRewards();
+    error RewardsExceeded();
+
+    function resolveCondition(
+        uint256 conditionId,
+        uint64 outcomeWin,
+        uint64 endsAt
+    ) external;
+}

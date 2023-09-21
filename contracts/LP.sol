@@ -6,9 +6,8 @@ import "./interface/IAccess.sol";
 import "./interface/ICoreBase.sol";
 import "./interface/ILP.sol";
 import "./interface/IOwnable.sol";
-import "./interface/IWNative.sol";
 import "./interface/IBet.sol";
-import "./interface/IAffiliate.sol";
+import "./interface/ILiquidityManager.sol";
 import "./libraries/FixedMath.sol";
 import "./libraries/SafeCast.sol";
 import "./utils/LiquidityTree.sol";
@@ -43,12 +42,14 @@ contract LP is
 
     mapping(uint256 => Game) public games;
 
-    uint64[3] public fees;
+    uint64[3] public fees; // fees[2] is not used
 
     mapping(address => Reward) public rewards;
-    // withdrawAfter[depNum] = timestamp when liquidity withdraw will be available
+    // withdrawAfter[depositId] = timestamp indicating when the liquidity deposit withdrawal will be available.
     mapping(uint48 => uint64) public withdrawAfter;
-    mapping(address => uint128) public override coreAffRewards; // Affiliate rewards by Core's conditions
+    mapping(address => uint128) private unusedVariable;
+
+    ILiquidityManager public liquidityManager;
 
     /**
      * @notice Check if Core `core` belongs to this Liquidity Pool and is active.
@@ -92,8 +93,7 @@ contract LP is
         address token_,
         uint128 minDepo_,
         uint64 daoFee,
-        uint64 dataProviderFee,
-        uint64 affiliateFee
+        uint64 dataProviderFee
     ) external virtual override initializer {
         if (minDepo_ == 0) revert IncorrectMinDepo();
 
@@ -106,7 +106,6 @@ contract LP is
         token = token_;
         fees[0] = daoFee;
         fees[1] = dataProviderFee;
-        fees[2] = affiliateFee;
         _checkFee();
         minDepo = minDepo_;
     }
@@ -135,6 +134,17 @@ contract LP is
         fees[uint256(feeType)] = newFee;
         _checkFee();
         emit FeeChanged(feeType, newFee);
+    }
+
+    /**
+     * @notice Owner: Set `newLiquidityManager` as liquidity manager contract address.
+     */
+    function changeLiquidityManager(address newLiquidityManager)
+        external
+        onlyOwner
+    {
+        liquidityManager = ILiquidityManager(newLiquidityManager);
+        emit LiquidityManagerChanged(newLiquidityManager);
     }
 
     /**
@@ -180,8 +190,7 @@ contract LP is
     }
 
     /**
-     * @notice Indicate the game `gameId` as canceled.
-     * @param  gameId the game ID
+     * @notice See {ILP-cancelGame}.
      */
     function cancelGame(uint256 gameId)
         external
@@ -196,125 +205,138 @@ contract LP is
     }
 
     /**
-     * @notice Create new game.
-     * @param  gameId the match or condition ID according to oracle's internal numbering
-     * @param  ipfsHash hash of detailed info about the game stored in the IPFS
-     * @param  startsAt timestamp when the game starts
+     * @notice See {ILP-createGame}.
      */
     function createGame(
         uint256 gameId,
-        bytes32 ipfsHash,
-        uint64 startsAt
+        uint64 startsAt,
+        bytes calldata data
     ) external restricted(this.createGame.selector) {
         Game storage game = games[gameId];
         if (game.startsAt > 0) revert GameAlreadyCreated();
         if (gameId == 0) revert IncorrectGameId();
         if (startsAt < block.timestamp) revert IncorrectTimestamp();
 
-        game.ipfsHash = ipfsHash;
         game.startsAt = startsAt;
 
-        emit NewGame(gameId, ipfsHash, startsAt);
+        emit NewGame(gameId, startsAt, data);
     }
 
     /**
-     * @notice Set `startsAt` as new game `gameId` start time.
-     * @param  gameId the game ID
-     * @param  startsAt new timestamp when the game starts
+     * @notice See {ILP-shiftGame}.
      */
     function shiftGame(uint256 gameId, uint64 startsAt)
         external
         restricted(this.shiftGame.selector)
     {
-        Game storage game = _getGame(gameId);
-        game.startsAt = startsAt;
+        if (startsAt == 0) revert IncorrectTimestamp();
+        _getGame(gameId).startsAt = startsAt;
         emit GameShifted(gameId, startsAt);
     }
 
     /**
      * @notice Deposit liquidity in the Liquidity Pool.
      * @notice Emits deposit token to `msg.sender`.
-     * @param  amount token's amount to deposit
+     * @param  amount The token's amount to deposit.
+     * @param  data The additional data for processing in the Liquidity Manager contract.
+     * @return depositId The deposit ID.
      */
-    function addLiquidity(uint128 amount) external {
-        TransferHelper.safeTransferFrom(
-            token,
-            msg.sender,
-            address(this),
-            amount
-        );
-        _addLiquidity(amount);
+    function addLiquidity(uint128 amount, bytes calldata data)
+        external
+        returns (uint48 depositId)
+    {
+        if (amount < minDepo) revert SmallDepo();
+
+        _deposit(amount);
+
+        depositId = _nodeAddLiquidity(amount);
+
+        if (address(liquidityManager) != address(0))
+            liquidityManager.beforeAddLiquidity(
+                msg.sender,
+                depositId,
+                amount,
+                data
+            );
+
+        withdrawAfter[depositId] = uint64(block.timestamp) + withdrawTimeout;
+        _mint(msg.sender, depositId);
+
+        emit LiquidityAdded(msg.sender, depositId, amount);
     }
 
     /**
-     * @notice Deposit liquidity in the Liquidity Pool via sending native tokens with msg.value.
-     * @notice Emits deposit token to `msg.sender`.
+     * @notice Donate and share liquidity between liquidity deposits.
+     * @param  amount The amount of liquidity to share between deposits.
+     * @param  depositId The ID of the last deposit that shares the donation.
      */
-    function addLiquidityNative() external payable {
-        IWNative(token).deposit{value: msg.value}();
-        _addLiquidity(msg.value.toUint128());
+    function donateLiquidity(uint128 amount, uint48 depositId) external {
+        if (amount == 0) revert SmallDonation();
+        if (depositId >= nextNode) revert DepositDoesNotExist();
+
+        _deposit(amount);
+        _addLimit(amount, depositId);
+
+        emit LiquidityDonated(msg.sender, depositId, amount);
     }
 
     /**
      * @notice Withdraw payout for liquidity deposit.
-     * @param  depNum deposit token ID
-     * @param  percent payout share to withdraw where `FixedMath.ONE` is 100% of deposit payout
+     * @param  depositId The ID of the liquidity deposit.
+     * @param  percent The payout share to withdraw, where `FixedMath.ONE` is 100% of the deposit balance.
+     * @return withdrawnAmount The amount of withdrawn liquidity.
      */
-    function withdrawLiquidity(
-        uint48 depNum,
-        uint40 percent,
-        bool isNative
-    ) external {
-        uint128 withdrawAmount = _withdrawLiquidity(depNum, percent);
-        if (isNative) {
-            IWNative(token).withdraw(withdrawAmount);
-            TransferHelper.safeTransferETH(msg.sender, withdrawAmount);
-        } else {
-            TransferHelper.safeTransfer(token, msg.sender, withdrawAmount);
-        }
-    }
+    function withdrawLiquidity(uint48 depositId, uint40 percent)
+        external
+        returns (uint128 withdrawnAmount)
+    {
+        uint64 time = uint64(block.timestamp);
+        uint64 _withdrawAfter = withdrawAfter[depositId];
+        if (time < _withdrawAfter)
+            revert WithdrawalTimeout(_withdrawAfter - time);
+        if (msg.sender != ownerOf(depositId)) revert LiquidityNotOwned();
 
-    /**
-     * @notice Withdraw affiliate profit share based on the contribution to betting traffic.
-     * @notice The gas cost of the function is directly proportional to the number of elements of
-               the array of all conditions contributed by the affiliate that are not rewarded yet.
-     * @param  core address of the Core traffic to which should be rewarded
-     * @param  data core specific params
-     * @param  affiliate address for getting rewards
-     * @return claimedAmount claimed reward amount
-     */
-    function claimAffiliateRewardFor(
-        address core,
-        bytes calldata data,
-        address affiliate
-    ) external isCore(core) returns (uint256 claimedAmount) {
-        claimedAmount = IAffiliate(core).resolveAffiliateReward(
-            affiliate,
-            data
-        );
-        if (claimedAmount > 0) {
-            TransferHelper.safeTransfer(token, affiliate, claimedAmount);
-            emit AffiliateRewarded(affiliate, claimedAmount);
+        withdrawAfter[depositId] = time + withdrawTimeout;
+        uint128 topNodeAmount = getReserve();
+        uint128 balance = nodeWithdrawView(depositId);
+        withdrawnAmount = _nodeWithdrawPercent(depositId, percent);
+
+        if (address(liquidityManager) != address(0))
+            liquidityManager.afterWithdrawLiquidity(
+                depositId,
+                nodeWithdrawView(depositId)
+            );
+
+        // burn the token if the deposit is fully withdrawn
+        if (withdrawnAmount == balance) _burn(depositId);
+
+        if (withdrawnAmount > 0) {
+            // check withdrawAmount allowed in ("node #1" - "active condition reinforcements")
+            if (withdrawnAmount > (topNodeAmount - lockedLiquidity))
+                revert LiquidityIsLocked();
+
+            _withdraw(msg.sender, withdrawnAmount);
         }
+        emit LiquidityRemoved(msg.sender, depositId, withdrawnAmount);
     }
 
     /**
      * @notice Reward the Factory owner (DAO) or Data Provider with total amount of charged fees.
      * @return claimedAmount claimed reward amount
      */
-    function claimReward() external returns (uint256 claimedAmount) {
+    function claimReward() external returns (uint128 claimedAmount) {
         Reward storage reward = rewards[msg.sender];
         if ((block.timestamp - reward.claimedAt) < claimTimeout)
             revert ClaimTimeout(reward.claimedAt + claimTimeout);
 
         int128 rewardAmount = reward.amount;
-        if (rewardAmount <= 0) return 0;
+        if (rewardAmount > 0) {
+            reward.amount = 0;
+            reward.claimedAt = uint64(block.timestamp);
 
-        reward.amount = 0;
-        reward.claimedAt = uint64(block.timestamp);
-
-        claimedAmount = uint128(rewardAmount);
-        TransferHelper.safeTransfer(token, msg.sender, claimedAmount);
+            claimedAmount = uint128(rewardAmount);
+            _withdraw(msg.sender, claimedAmount);
+        }
     }
 
     /**
@@ -328,12 +350,7 @@ contract LP is
         uint64 expiresAt,
         IBet.BetData calldata betData
     ) external override returns (uint256) {
-        TransferHelper.safeTransferFrom(
-            token,
-            msg.sender,
-            address(this),
-            amount
-        );
+        _deposit(amount);
         return _bet(msg.sender, core, amount, expiresAt, betData);
     }
 
@@ -353,46 +370,24 @@ contract LP is
         uint64 expiresAt,
         IBet.BetData calldata betData
     ) external override returns (uint256) {
-        TransferHelper.safeTransferFrom(
-            token,
-            msg.sender,
-            address(this),
-            amount
-        );
+        _deposit(amount);
         return _bet(bettor, core, amount, expiresAt, betData);
     }
 
     /**
-     * @notice Make new bet via sending native tokens with msg.value.
-     * @notice Emits bet token to `msg.sender`.
-     * @param  core address of the Core the bet is intended
-     * @param  expiresAt the time before which bet should be made
-     * @param  betData customized bet data
+     * @notice Core: Withdraw payout for bet token `tokenId` from the Core `core`.
+     * @return amount The amount of withdrawn payout.
      */
-    function betNative(
-        address core,
-        uint64 expiresAt,
-        IBet.BetData calldata betData
-    ) external payable override returns (uint256) {
-        IWNative(token).deposit{value: msg.value}();
-        return
-            _bet(msg.sender, core, msg.value.toUint128(), expiresAt, betData);
-    }
+    function withdrawPayout(address core, uint256 tokenId)
+        external
+        override
+        isCore(core)
+        returns (uint128 amount)
+    {
+        address account;
+        (account, amount) = IBet(core).resolvePayout(tokenId);
+        if (amount > 0) _withdraw(account, amount);
 
-    function withdrawPayout(
-        address core,
-        uint256 tokenId,
-        bool isNative
-    ) external override isCore(core) {
-        (address account, uint128 amount) = IBet(core).resolvePayout(tokenId);
-        if (amount > 0) {
-            if (isNative) {
-                IWNative(token).withdraw(amount);
-                TransferHelper.safeTransferETH(account, amount);
-            } else {
-                TransferHelper.safeTransfer(token, account, amount);
-            }
-        }
         emit BettorWin(core, account, tokenId, amount);
     }
 
@@ -401,6 +396,7 @@ contract LP is
      */
     function addCondition(uint256 gameId)
         external
+        view
         override
         isActive(msg.sender)
         returns (uint64)
@@ -427,11 +423,11 @@ contract LP is
                 games[gameId].lockedLiquidity += _deltaReserve;
             }
 
-            CoreData storage coreData = cores[msg.sender];
+            CoreData storage coreData = _getCore(msg.sender);
             coreData.lockedLiquidity += _deltaReserve;
             lockedLiquidity += _deltaReserve;
 
-            uint128 reserve = getReserve();
+            uint256 reserve = getReserve();
             if (
                 lockedLiquidity > reserve ||
                 coreData.lockedLiquidity >
@@ -445,7 +441,7 @@ contract LP is
      * @notice Factory: Indicate `core` as new active Core.
      */
     function addCore(address core) external override onlyFactory {
-        CoreData storage coreData = cores[core];
+        CoreData storage coreData = _getCore(core);
         coreData.minBet = 1;
         coreData.reinforcementAbility = uint64(FixedMath.ONE);
         coreData.state = CoreState.ACTIVE;
@@ -464,66 +460,78 @@ contract LP is
      * @param  gameId the game ID
      * @param  lockedReserve amount of liquidity reserved by condition
      * @param  finalReserve amount of liquidity that was not demand according to the condition result
+     * @param  depositId The ID of the last deposit that shares the income. In case of loss, all deposits bear the loss
+     *         collectively.
      */
     function addReserve(
         uint256 gameId,
         uint128 lockedReserve,
         uint128 finalReserve,
-        uint48 leaf
-    ) external override isCore(msg.sender) returns (uint128 affiliatesReward) {
+        uint48 depositId
+    ) external override isCore(msg.sender) {
         Reward storage dataProviderRewards = rewards[dataProvider];
         Reward storage daoRewards = rewards[factory.owner()];
 
         if (finalReserve > lockedReserve) {
-            uint128 profit = finalReserve - lockedReserve;
-            uint128 netProfit = profit;
+            uint128 netProfit = finalReserve - lockedReserve;
+            uint256 profit = netProfit;
 
-            // increase oracle rewards
-            uint128 dataProviderReward = _getFee(FeeType.DATA_PROVIDER)
-                .mul(profit)
-                .toUint128();
+            // increase data provider rewards
+            uint128 dataProviderReward = _getShare(
+                profit,
+                FeeType.DATA_PROVIDER
+            );
             netProfit -= _addDelta(
                 dataProviderRewards.amount,
                 dataProviderReward
             );
             dataProviderRewards.amount += dataProviderReward.toInt128();
             // increase DAO rewards
-            uint128 daoReward = _getFee(FeeType.DAO).mul(profit).toUint128();
+            uint128 daoReward = _getShare(profit, FeeType.DAO);
             netProfit -= _addDelta(daoRewards.amount, daoReward);
             daoRewards.amount += daoReward.toInt128();
-            // calc affiliate rewards
-            affiliatesReward = _getFee(FeeType.AFFILIATE)
-                .mul(profit)
-                .toUint128();
 
-            // add profit to core aff accumulator, save raw rewards
-            coreAffRewards[msg.sender] += affiliatesReward;
-
-            // add profit to liquidity (reduced by oracle/dao's rewards)
-            _addLimit(netProfit - affiliatesReward, leaf);
+            // add profit to liquidity (reduced by data provider/dao's rewards)
+            _addLimit(netProfit, depositId);
         } else {
             // remove loss from liquidityTree excluding canceled conditions (when finalReserve = lockedReserve)
             if (lockedReserve - finalReserve > 0) {
-                uint128 loss = lockedReserve - finalReserve;
-                uint128 netLoss = loss;
+                uint128 netLoss = lockedReserve - finalReserve;
+                uint256 loss = netLoss;
 
-                // reduce oracle loss
-                uint128 oracleLoss = _getFee(FeeType.DATA_PROVIDER)
-                    .mul(loss)
-                    .toUint128();
-                netLoss -= _reduceDelta(dataProviderRewards.amount, oracleLoss);
-                dataProviderRewards.amount -= oracleLoss.toInt128();
+                // reduce data provider loss
+                uint128 dataProviderLoss = _getShare(
+                    loss,
+                    FeeType.DATA_PROVIDER
+                );
+                netLoss -= _reduceDelta(
+                    dataProviderRewards.amount,
+                    dataProviderLoss
+                );
+                dataProviderRewards.amount -= dataProviderLoss.toInt128();
                 // reduce DAO rewards
-                uint128 daoLoss = _getFee(FeeType.DAO).mul(loss).toUint128();
+                uint128 daoLoss = _getShare(loss, FeeType.DAO);
                 netLoss -= _reduceDelta(daoRewards.amount, daoLoss);
                 daoRewards.amount -= daoLoss.toInt128();
 
-                // remove all loss (reduced by oracle/dao's losses) from liquidity
+                // remove all loss (reduced by data provider/dao's losses) from liquidity
                 _remove(netLoss);
             }
         }
         if (lockedReserve > 0)
             _reduceLockedLiquidity(msg.sender, gameId, lockedReserve);
+    }
+
+    /**
+     * @notice Checks if the deposit token exists (not burned).
+     */
+    function isDepositExists(uint256 depositId)
+        external
+        view
+        override
+        returns (bool)
+    {
+        return _exists(depositId);
     }
 
     /**
@@ -547,20 +555,25 @@ contract LP is
         view
         returns (uint128)
     {
-        return uint128(cores[core].reinforcementAbility.mul(getReserve()));
+        return uint128(_getCore(core).reinforcementAbility.mul(getReserve()));
     }
 
     /**
      * @notice Get the total amount of liquidity in the Pool.
      */
-    function getReserve() public view override returns (uint128 reserve) {
+    function getReserve() public view returns (uint128 reserve) {
         return treeNode[1].amount;
     }
 
     /**
-     * @notice Get ID of the last added leaf to the liquidity tree.
+     * @notice Get the ID of the most recently made deposit.
      */
-    function getLeaf() external view override returns (uint48 leaf) {
+    function getLastDepositId()
+        external
+        view
+        override
+        returns (uint48 depositId)
+    {
         return (nextNode - 1);
     }
 
@@ -606,22 +619,7 @@ contract LP is
      * @notice Throw if `core` not belongs to the Liquidity Pool's Cores.
      */
     function checkCore(address core) public view {
-        if (_getCoreState(core) == CoreState.UNKNOWN) revert UnknownCore();
-    }
-
-    /**
-     * @notice Deposit liquidity in the Liquidity Pool.
-     * @notice Emits deposit token to `msg.sender`.
-     * @param  amount token's amount to deposit
-     */
-    function _addLiquidity(uint128 amount) internal {
-        if (amount < minDepo) revert SmallDepo();
-
-        uint48 leaf = _nodeAddLiquidity(amount);
-
-        withdrawAfter[leaf] = uint64(block.timestamp) + withdrawTimeout;
-        _mint(msg.sender, leaf);
-        emit LiquidityAdded(msg.sender, leaf, amount);
+        if (_getCore(core).state == CoreState.UNKNOWN) revert UnknownCore();
     }
 
     /**
@@ -640,10 +638,22 @@ contract LP is
         IBet.BetData memory betData
     ) internal isActive(core) returns (uint256) {
         if (block.timestamp >= expiresAt) revert BetExpired();
-        if (amount < cores[core].minBet) revert SmallBet();
+        if (amount < _getCore(core).minBet) revert SmallBet();
         // owner is default affiliate
         if (betData.affiliate == address(0)) betData.affiliate = owner();
         return IBet(core).putBet(bettor, amount, betData);
+    }
+
+    /**
+     * @notice Deposit `amount` of `token` tokens from `account` balance to the contract.
+     */
+    function _deposit(uint128 amount) internal {
+        TransferHelper.safeTransferFrom(
+            token,
+            msg.sender,
+            address(this),
+            amount
+        );
     }
 
     function _reduceLockedLiquidity(
@@ -654,49 +664,22 @@ contract LP is
         if (gameId > 0) {
             games[gameId].lockedLiquidity -= deltaReserve;
         }
-        cores[core].lockedLiquidity -= deltaReserve;
+        _getCore(core).lockedLiquidity -= deltaReserve;
         lockedLiquidity -= deltaReserve;
     }
 
     /**
-     * @notice Resolve payout for liquidity deposit.
-     * @param  depNum deposit token ID
-     * @param  percent payout share to resolve where `FixedMath.ONE` is 100% of deposit payout
+     * @notice Withdraw `amount` of tokens to `account` balance.
      */
-    function _withdrawLiquidity(uint48 depNum, uint40 percent)
-        internal
-        returns (uint128 withdrawAmount)
-    {
-        uint64 time = uint64(block.timestamp);
-        uint64 _withdrawAfter = withdrawAfter[depNum];
-        if (time < _withdrawAfter)
-            revert WithdrawalTimeout(_withdrawAfter - time);
-        if (msg.sender != ownerOf(depNum)) revert LiquidityNotOwned();
-
-        withdrawAfter[depNum] = time + withdrawTimeout;
-        uint128 topNodeAmount = getReserve();
-        withdrawAmount = _nodeWithdrawPercent(depNum, percent);
-
-        if (withdrawAmount == 0) revert NoLiquidity();
-
-        // check withdrawAmount allowed in ("node #1" - "active condition reinforcements")
-        if (withdrawAmount > (topNodeAmount - lockedLiquidity))
-            revert LiquidityIsLocked();
-        emit LiquidityRemoved(msg.sender, depNum, withdrawAmount);
+    function _withdraw(address account, uint128 amount) internal {
+        TransferHelper.safeTransfer(token, account, amount);
     }
 
     /**
      * @notice Throw if `core` not belongs to the Liquidity Pool's active Cores.
      */
     function _checkCoreActive(address core) internal view {
-        if (_getCoreState(core) != CoreState.ACTIVE) revert CoreNotActive();
-    }
-
-    /**
-     * @notice Get `CoreState` by core address.
-     */
-    function _getCoreState(address core) internal view returns (CoreState) {
-        return cores[core].state;
+        if (_getCore(core).state != CoreState.ACTIVE) revert CoreNotActive();
     }
 
     /**
@@ -704,11 +687,13 @@ contract LP is
      */
     function _checkFee() internal view {
         if (
-            _getFee(FeeType.DAO) +
-                _getFee(FeeType.DATA_PROVIDER) +
-                _getFee(FeeType.AFFILIATE) >
+            _getFee(FeeType.DAO) + _getFee(FeeType.DATA_PROVIDER) >
             FixedMath.ONE
         ) revert IncorrectFee();
+    }
+
+    function _getCore(address core) internal view returns (CoreData storage) {
+        return cores[core];
     }
 
     /**
@@ -726,6 +711,14 @@ contract LP is
         if (game.startsAt == 0) revert GameNotExists();
 
         return game;
+    }
+
+    function _getShare(uint256 amount, FeeType feeType)
+        internal
+        view
+        returns (uint128)
+    {
+        return _getFee(feeType).mul(amount).toUint128();
     }
 
     /**

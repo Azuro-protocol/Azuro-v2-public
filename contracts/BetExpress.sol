@@ -2,9 +2,7 @@
 
 pragma solidity ^0.8.9;
 
-import "./interface/IAffiliate.sol";
 import "./interface/IBetExpress.sol";
-import "./interface/ICoreBase.sol";
 import "./interface/ILP.sol";
 import "./libraries/CoreTools.sol";
 import "./libraries/FixedMath.sol";
@@ -12,26 +10,21 @@ import "./libraries/SafeCast.sol";
 import "./utils/OwnableUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/token/ERC721/ERC721Upgradeable.sol";
 
-contract BetExpress is
-    ERC721Upgradeable,
-    OwnableUpgradeable,
-    IBetExpress,
-    IAffiliate
-{
+contract BetExpress is ERC721Upgradeable, OwnableUpgradeable, IBetExpress {
     using FixedMath for *;
     using SafeCast for *;
 
     uint256 public lastBetId;
-    uint128 public margin;
     ILP public lp;
     ICoreBase public core;
-    uint64 public maxReinforcementShare;
+    uint128 public reinforcement;
     string public baseURI;
 
     // Condition ID -> The amount of reserves locked by bets with the condition
-    mapping(uint256 => uint256) public reinforcements;
-    mapping(address => uint256) public affRewards;
+    mapping(uint256 => uint256) public lockedReserves;
     mapping(uint256 => Bet) private _bets;
+
+    uint256 public maxOdds;
 
     /**
      * @notice Only permits calls by the Liquidity Pool.
@@ -51,6 +44,7 @@ contract BetExpress is
 
         lp = ILP(lp_);
         core = ICoreBase(core_);
+        maxOdds = FixedMath.ONE * 1000;
     }
 
     /**
@@ -62,21 +56,22 @@ contract BetExpress is
     }
 
     /**
-     * @notice Set common parameters for express bets
-     * @param  margin_ basic marginality commission value
-     * @param  maxReinforcementShare_ the maximum amount of reserves locked by all bets with the same condition
+     * @notice Owner: Set `newReinforcement` as the new maximum amount of reserves that can be locked by all bets
+     *         for the same condition.
      */
-    function setParams(uint128 margin_, uint64 maxReinforcementShare_)
-        external
-        onlyOwner
-    {
-        if (margin_ > FixedMath.ONE) revert IncorrectMargin();
-        margin = margin_;
-        if (maxReinforcementShare_ > FixedMath.ONE)
-            revert IncorrectMaxReinforcementShare();
-        maxReinforcementShare = maxReinforcementShare_;
+    function changeReinforcement(uint128 newReinforcement) external onlyOwner {
+        reinforcement = newReinforcement;
+        emit ReinforcementChanged(newReinforcement);
+    }
 
-        emit ParamsUpdated(margin_, maxReinforcementShare_);
+    /**
+     * @notice Owner: Set `newMaxOdds` as the new maximum odds that can be accepted for a bet.
+     */
+    function changeMaxOdds(uint256 newMaxOdds) external onlyOwner {
+        if (newMaxOdds < FixedMath.ONE) revert IncorrectMaxOdds();
+
+        maxOdds = newMaxOdds;
+        emit MaxOddsChanged(newMaxOdds);
     }
 
     /**
@@ -87,115 +82,67 @@ contract BetExpress is
         uint128 amount,
         BetData calldata betData
     ) external override onlyLp returns (uint256 betId) {
-        SubBet[] memory subBets = abi.decode(betData.data, (SubBet[]));
-
-        uint256 expressOdds = FixedMath.ONE;
-        uint256 oddsSum;
-        uint256 length = subBets.length;
-        uint256[] memory outcomesIndexes = new uint256[](length);
-        uint64[] memory conditionOdds = new uint64[](length);
-        uint128[2][] memory virtualFunds = new uint128[2][](length);
-
-        if (length < 2) revert TooFewSubbets();
+        ICoreBase.CoreBetData[] memory subBets = abi.decode(
+            betData.data,
+            (ICoreBase.CoreBetData[])
+        );
+        (
+            uint64[] memory conditionOdds,
+            uint256 expressOdds,
+            uint256[] memory outcomesIndexes,
+            uint128[][] memory virtualFunds,
+            uint8[] memory winningOutcomesCounts
+        ) = _calcOdds(subBets, amount);
+        if (expressOdds < betData.minOdds) revert SmallOdds();
+        if (expressOdds > maxOdds) revert LargeOdds();
 
         betId = ++lastBetId;
         Bet storage bet = _bets[betId];
 
-        uint256[] memory gameIds = new uint256[](length);
-
-        for (uint256 i = 0; i < length; i++) {
-            SubBet memory subBet = subBets[i];
-
-            ICondition.Condition memory condition = core.getCondition(
-                subBet.conditionId
-            );
-            _conditionIsRunning(condition, subBet.conditionId);
-            {
-                uint256 gameId = condition.gameId;
-                for (uint256 j = 0; j < i; j++) {
-                    if (gameIds[j] == gameId) revert SameGameIdsNotAllowed();
-                }
-                gameIds[i] = gameId;
-            }
-            uint256 outcomeIndex = CoreTools.getOutcomeIndex(
-                condition,
-                subBet.outcomeId
-            );
-            uint256 odds = CoreTools.calcOdds(
-                condition.virtualFunds,
-                0,
-                outcomeIndex,
-                0
-            );
-            uint64 adjustedOdds = CoreTools.marginAdjustedOdds(
-                odds,
-                _calcMargin(margin, odds)
-            );
-
-            expressOdds = expressOdds.mul(adjustedOdds);
-            oddsSum += adjustedOdds;
-            virtualFunds[i] = condition.virtualFunds;
-            outcomesIndexes[i] = outcomeIndex;
-            conditionOdds[i] = adjustedOdds;
-            bet.subBets.push(subBet);
-        }
-
-        bet.affiliate = betData.affiliate;
         bet.odds = expressOdds.toUint64();
         bet.amount = amount;
-        bet.leaf = lp.getLeaf();
+        bet.lastDepositId = lp.getLastDepositId();
         bet.conditionOdds = conditionOdds;
 
+        uint256 oddsSum;
+        uint256 length = subBets.length;
+        for (uint256 i = 0; i < length; ++i) {
+            bet.subBets.push(subBets[i]);
+            oddsSum += conditionOdds[i];
+        }
         _shiftOdds(
             expressOdds,
             oddsSum,
             amount,
             subBets,
             conditionOdds,
+            outcomesIndexes,
             virtualFunds,
-            outcomesIndexes
+            winningOutcomesCounts
         );
 
         uint128 deltaPayout = expressOdds.mul(amount).toUint128() - amount;
-        uint256 maxReinforcement = maxReinforcementShare.mul(
-            lp.getLockedLiquidityLimit(address(this))
-        );
-        for (uint256 i = 0; i < subBets.length; i++) {
+        for (uint256 i = 0; i < length; ++i) {
             uint256 conditionId = subBets[i].conditionId;
-            uint256 reinforcement = reinforcements[conditionId] +
-                (deltaPayout * conditionOdds[i]) /
-                oddsSum;
-            if (reinforcement > maxReinforcement)
+            uint256 lockedReserve = lockedReserves[conditionId] +
+                (deltaPayout * (conditionOdds[i] - FixedMath.ONE)) /
+                (oddsSum - length * FixedMath.ONE);
+            if (lockedReserve > reinforcement)
                 revert TooLargeReinforcement(conditionId);
-            reinforcements[conditionId] = reinforcement;
+            lockedReserves[conditionId] = lockedReserve;
         }
 
         lp.changeLockedLiquidity(0, deltaPayout.toInt128());
 
         _safeMint(bettor, betId);
-        emit NewBet(betId, bet);
+        emit NewBet(bettor, betData.affiliate, betId, bet);
     }
 
     /**
-     * @notice Liquidity Pool: Resolve affiliate's contribution to total profit that is not rewarded yet.
-     * @param  affiliate address indicated as an affiliate when placing bets
-     * @return reward contribution amount
-     */
-    function resolveAffiliateReward(address affiliate, bytes calldata)
-        external
-        override
-        onlyLp
-        returns (uint256 reward)
-    {
-        reward = affRewards[affiliate];
-        delete affRewards[affiliate];
-    }
-
-    /**
-     * @notice Liquidity Pool: Resolve BetExpress token ID `tokenId` payout.
-     * @param  tokenId BetExpress token ID
-     * @return account winning account
-     * @return payout amount of winnings
+     * @notice Liquidity Pool: Resolves the payout of the express bet with ID 'betId'.
+     * @param  tokenId The express bet token ID.
+     * @return account winning account.
+     * @return payout amount of winnings.
      */
     function resolvePayout(uint256 tokenId)
         external
@@ -206,79 +153,67 @@ contract BetExpress is
         Bet storage bet = _bets[tokenId];
 
         account = ownerOf(tokenId);
-        payout = viewPayout(tokenId);
+        payout = _viewPayout(bet);
 
         uint128 amount = bet.amount;
-        bet.amount = 0;
+        bet.isClaimed = true;
 
         uint128 fullPayout = amount.mul(bet.odds).toUint128();
-        uint128 reward = lp.addReserve(
+        lp.addReserve(
             0,
             fullPayout - amount,
             fullPayout - payout,
-            bet.leaf
+            bet.lastDepositId
         );
-
-        affRewards[bet.affiliate] += reward;
     }
 
     /**
-     * @notice Get information about BetExpress with ID 'betId'
-     * @param  betId BetExpress token ID
-     * @return betInfo BetExpress information
+     * @notice Calculate the odds of a bet with an amount for the sub-bet subBets.
+     * @param  subBets The CoreBetData array. See {ICoreBase.CoreBetData}.
+     * @param  amount The amount of tokens to bet.
+     * @return conditionOdds The betting odds for each sub-bet.
+     * @return expressOdds The resulting betting odds.
+     */
+    function calcOdds(ICoreBase.CoreBetData[] calldata subBets, uint128 amount)
+        external
+        view
+        returns (uint64[] memory conditionOdds, uint256 expressOdds)
+    {
+        (conditionOdds, expressOdds, , , ) = _calcOdds(subBets, amount);
+    }
+
+    /**
+     * @notice Calc the payout for express bet with ID 'betId'.
+     * @notice Returns the payout even if it has already been paid.
+     * @param  tokenId The express bet token ID.
+     * @return The pending or redeemed payout of the bet owner.
+     */
+    function calcPayout(uint256 tokenId) external view returns (uint128) {
+        return _calcPayout(_bets[tokenId]);
+    }
+
+    /**
+     * @notice Get information about express bet with ID 'betId'
+     * @param  betId The express bet token ID.
+     * @return betInfo The express bet information.
      */
     function getBet(uint256 betId) external view returns (Bet memory betInfo) {
         return _bets[betId];
     }
 
     /**
-     * @notice Get BetExpress token ID `tokenId` payout.
-     * @param  tokenId BetExpress token ID
-     * @return payout of the token owner
+     * @notice Get the payout for express bet `tokenId`.
+     * @param  tokenId The express bet token ID.
+     * @return The pending payout of the bet owner.
      */
     function viewPayout(uint256 tokenId)
-        public
+        external
         view
         virtual
         override
         returns (uint128)
     {
-        Bet storage bet = _bets[tokenId];
-        uint128 amount = bet.amount;
-        SubBet[] storage subBets = bet.subBets;
-        uint256 length = subBets.length;
-        uint256 winningOdds = FixedMath.ONE;
-
-        if (length == 0) revert BetNotExists();
-        if (amount == 0) revert AlreadyResolved();
-
-        for (uint256 i = 0; i < length; i++) {
-            SubBet storage subBet = subBets[i];
-            ICondition.Condition memory condition = core.getCondition(
-                subBet.conditionId
-            );
-
-            if (condition.state == ICondition.ConditionState.RESOLVED) {
-                if (condition.outcomeWin != subBet.outcomeId) {
-                    // lose
-                    return 0;
-                } else {
-                    // win
-                    winningOdds = winningOdds.mul(bet.conditionOdds[i]);
-                }
-            } else if (
-                !(condition.state == ICondition.ConditionState.CANCELED ||
-                    lp.isGameCanceled(condition.gameId))
-            ) {
-                revert ConditionNotFinished(subBet.conditionId);
-            }
-        }
-
-        if (winningOdds > FixedMath.ONE) {
-            return amount.mul(winningOdds).toUint128();
-        } else {
-            return amount;
-        }
+        return _viewPayout(_bets[tokenId]);
     }
 
     /**
@@ -289,38 +224,25 @@ contract BetExpress is
         uint256 expressOdds,
         uint256 oddsSum,
         uint128 amount,
-        SubBet[] memory subBets,
+        ICoreBase.CoreBetData[] memory subBets,
         uint64[] memory conditionOdds,
-        uint128[2][] memory virtualFunds,
-        uint256[] memory outcomesIndexes
+        uint256[] memory outcomesIndexes,
+        uint128[][] memory virtualFunds,
+        uint8[] memory winningOutcomesCounts
     ) internal {
         uint256 length = subBets.length;
         uint256 divider = oddsSum - length * FixedMath.ONE;
         uint256 smoothMultiplier = _smoothMultiplier(expressOdds);
 
-        if (divider == 0) revert TooSmallOdds();
-
-        for (uint256 i = 0; i < length; i++) {
+        for (uint256 i = 0; i < length; ++i) {
             uint256 subWinPayout = amount.mul(conditionOdds[i] - FixedMath.ONE);
-            uint256 index = outcomesIndexes[i];
-
-            uint64 newOdds = CoreTools
-                .calcOdds(
-                    virtualFunds[i],
-                    ((subWinPayout * smoothMultiplier) / divider).toUint128(),
-                    index,
-                    0
-                )
-                .toUint64();
-
-            uint64[2] memory odds;
-
-            uint64 oppositeOdds = newOdds
-                .div(newOdds - FixedMath.ONE)
-                .toUint64();
-
-            odds[index] = newOdds;
-            odds[1 - index] = oppositeOdds;
+            virtualFunds[i][outcomesIndexes[i]] += ((subWinPayout *
+                smoothMultiplier) / divider).toUint128();
+            uint256[] memory odds = CoreTools.calcOdds(
+                virtualFunds[i],
+                0,
+                winningOutcomesCounts[i]
+            );
 
             core.changeOdds(subBets[i].conditionId, odds);
         }
@@ -346,20 +268,149 @@ contract BetExpress is
             revert ConditionNotRunning(conditionId);
     }
 
+    /**
+     * @notice Calculate the odds of a bet with an amount for the sub-bet subBets.
+     * @notice This method additionally returns `outcomesIndexes` and `virtualFunds` that can assist in subsequent
+     *         calculations.
+     * @param amount The amount of tokens to bet.
+     * @param subBets The CoreBetData array. See {ICoreBase.CoreBetData}.
+     * @return conditionOdds The betting odds for each sub-bet.
+     * @return expressOdds The resulting betting odds.
+     * @return outcomesIndexes The predicted outcome index for each sub-bet.
+     * @return virtualFunds The condition virtual funds for each sub-bet.
+     * @return winningOutcomesCounts The condition number of winning outcomes for each sub-bet
+     */
+    function _calcOdds(ICoreBase.CoreBetData[] memory subBets, uint128 amount)
+        internal
+        view
+        returns (
+            uint64[] memory conditionOdds,
+            uint256 expressOdds,
+            uint256[] memory outcomesIndexes,
+            uint128[][] memory virtualFunds,
+            uint8[] memory winningOutcomesCounts
+        )
+    {
+        uint256 length = subBets.length;
+        if (length < 2) revert TooFewSubbets();
+
+        expressOdds = FixedMath.ONE;
+        uint256 oddsSum;
+
+        conditionOdds = new uint64[](length);
+        outcomesIndexes = new uint256[](length);
+        virtualFunds = new uint128[][](length);
+        winningOutcomesCounts = new uint8[](length);
+        uint64[] memory conditionMargins = new uint64[](length);
+
+        {
+            uint256[] memory gameIds = new uint256[](length);
+            for (uint256 i = 0; i < length; ++i) {
+                ICoreBase.CoreBetData memory subBet = subBets[i];
+
+                ICondition.Condition memory condition = core.getCondition(
+                    subBet.conditionId
+                );
+                _conditionIsRunning(condition, subBet.conditionId);
+                {
+                    uint256 gameId = condition.gameId;
+                    for (uint256 j = 0; j < i; ++j) {
+                        if (gameIds[j] == gameId)
+                            revert SameGameIdsNotAllowed();
+                    }
+                    gameIds[i] = gameId;
+                }
+                uint256 outcomeIndex = core.getOutcomeIndex(
+                    subBet.conditionId,
+                    subBet.outcomeId
+                );
+                uint256 odds = CoreTools.calcOdds(
+                    condition.virtualFunds,
+                    0,
+                    condition.winningOutcomesCount
+                )[outcomeIndex];
+
+                expressOdds = expressOdds.mul(odds);
+                oddsSum += odds;
+                outcomesIndexes[i] = outcomeIndex;
+                virtualFunds[i] = condition.virtualFunds;
+                conditionMargins[i] = condition.margin;
+                winningOutcomesCounts[i] = condition.winningOutcomesCount;
+            }
+        }
+
+        {
+            uint128 subBetAmount = (((expressOdds - FixedMath.ONE) * amount) /
+                (oddsSum - length * FixedMath.ONE)).toUint128();
+
+            expressOdds = FixedMath.ONE;
+            for (uint256 i = 0; i < length; ++i) {
+                uint256 outcomeIndex = outcomesIndexes[i];
+                virtualFunds[i][outcomeIndex] += subBetAmount;
+                uint256 adjustedOdds = CoreTools.calcOdds(
+                    virtualFunds[i],
+                    conditionMargins[i],
+                    winningOutcomesCounts[i]
+                )[outcomeIndex];
+                virtualFunds[i][outcomeIndex] -= subBetAmount;
+
+                conditionOdds[i] = adjustedOdds.toUint64();
+                expressOdds = expressOdds.mul(adjustedOdds);
+            }
+        }
+    }
+
+    /**
+     * @notice Calc the payout for express bet.
+     * @notice Returns the payout even if it has already been paid.
+     * @param  bet The express bet struct.
+     * @return The pending or redeemed payout of the bet owner.
+     */
+    function _calcPayout(Bet storage bet) internal view returns (uint128) {
+        uint128 amount = bet.amount;
+        ICoreBase.CoreBetData[] storage subBets = bet.subBets;
+        uint256 length = subBets.length;
+        uint256 winningOdds = FixedMath.ONE;
+
+        if (length == 0) revert BetNotExists();
+
+        for (uint256 i = 0; i < length; ++i) {
+            ICoreBase.CoreBetData storage subBet = subBets[i];
+            ICondition.Condition memory condition = core.getCondition(
+                subBet.conditionId
+            );
+
+            if (condition.state == ICondition.ConditionState.RESOLVED) {
+                if (core.isOutcomeWinning(subBet.conditionId, subBet.outcomeId))
+                    winningOdds = winningOdds.mul(bet.conditionOdds[i]);
+                else return 0;
+            } else if (
+                !(condition.state == ICondition.ConditionState.CANCELED ||
+                    lp.isGameCanceled(condition.gameId))
+            ) {
+                revert ConditionNotFinished(subBet.conditionId);
+            }
+        }
+
+        if (winningOdds > FixedMath.ONE) {
+            return amount.mul(winningOdds).toUint128();
+        } else {
+            return amount;
+        }
+    }
+
     function _checkOnlyLp() internal view {
         if (msg.sender != address(lp)) revert OnlyLp();
     }
 
     /**
-     * @notice Get bookmaker commission value, adjusted by multiplier
-     * The resulting margin is in (margin_; 2 * margin_)
+     * @notice Get the available payout for express bet.
+     * @param  bet The express bet struct.
+     * @return The pending payout of the bet owner.
      */
-    function _calcMargin(uint256 margin_, uint256 odds)
-        internal
-        pure
-        returns (uint256)
-    {
-        return margin_.mul(FixedMath.ONE + _smoothMultiplier(odds));
+    function _viewPayout(Bet storage bet) internal view returns (uint128) {
+        if (bet.isClaimed) revert AlreadyPaid();
+        return _calcPayout(bet);
     }
 
     /**

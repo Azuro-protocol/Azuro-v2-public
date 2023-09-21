@@ -4,8 +4,6 @@ pragma solidity ^0.8.9;
 
 import "./interface/IAzuroBet.sol";
 import "./interface/ICoreBase.sol";
-import "./interface/ILP.sol";
-import "./libraries/AffiliateHelper.sol";
 import "./libraries/CoreTools.sol";
 import "./libraries/FixedMath.sol";
 import "./libraries/SafeCast.sol";
@@ -14,19 +12,20 @@ import "./utils/OwnableUpgradeable.sol";
 
 /// @title Base contract for Azuro cores
 abstract contract CoreBase is OwnableUpgradeable, ICoreBase {
-    using FixedMath for uint256;
-    using SafeCast for uint256;
-    using SafeCast for uint128;
+    uint256 public constant MAX_OUTCOMES_COUNT = 20;
+
+    using FixedMath for *;
+    using SafeCast for *;
 
     mapping(uint256 => Bet) public bets;
     mapping(uint256 => Condition) public conditions;
+    // Condition ID => outcome ID => Condition outcome index + 1
+    mapping(uint256 => mapping(uint256 => uint256)) public outcomeNumbers;
+    // Condition ID => outcome ID => is winning
+    mapping(uint256 => mapping(uint256 => bool)) public winningOutcomes;
 
     IAzuroBet public azuroBet;
     ILP public lp;
-
-    AffiliateHelper.Contributions internal contributions;
-    AffiliateHelper.ContributedConditionIds internal contributedConditionIds;
-    AffiliateHelper.AffiliatedProfits internal affiliatedProfits;
 
     /**
      * @notice Throw if caller is not the Liquidity Pool.
@@ -67,41 +66,91 @@ abstract contract CoreBase is OwnableUpgradeable, ICoreBase {
                 this.cancelCondition.selector
             );
 
-        uint256 gameId = condition.gameId;
         if (_isConditionResolved(condition) || _isConditionCanceled(condition))
             revert ConditionAlreadyResolved();
 
-        condition.state = ConditionState.CANCELED;
-
-        AffiliateHelper.delAffiliatedProfit(affiliatedProfits, conditionId);
-
-        uint128 lockedReserve = _calcReserve(
-            condition.reinforcement,
-            condition.funds
-        );
-        if (lockedReserve > 0)
-            lp.changeLockedLiquidity(gameId, -lockedReserve.toInt128());
-
-        emit ConditionResolved(
+        _resolveCondition(
+            condition,
             conditionId,
-            uint8(ConditionState.CANCELED),
-            0,
-            0
+            ConditionState.CANCELED,
+            new uint64[](0),
+            condition.totalNetBets
         );
+    }
+
+    /**
+     * @notice See {ICoreBase-changeMargin}.
+     */
+    function changeMargin(uint256 conditionId, uint64 newMargin)
+        external
+        restricted(this.changeMargin.selector)
+    {
+        Condition storage condition = _getCondition(conditionId);
+        _conditionIsRunning(condition);
+
+        if (newMargin > FixedMath.ONE) revert IncorrectMargin();
+
+        condition.margin = newMargin;
+
+        emit MarginChanged(conditionId, newMargin);
     }
 
     /**
      * @notice See {ICoreBase-changeOdds}.
      */
-    function changeOdds(uint256 conditionId, uint64[2] calldata newOdds)
+    function changeOdds(uint256 conditionId, uint256[] calldata newOdds)
         external
         restricted(this.changeOdds.selector)
     {
         Condition storage condition = _getCondition(conditionId);
         _conditionIsRunning(condition);
+        if (newOdds.length != condition.payouts.length)
+            revert OutcomesAndOddsCountDiffer();
 
         _applyOdds(condition, newOdds);
         emit OddsChanged(conditionId, newOdds);
+    }
+
+    /**
+     * @notice See {ICoreBase-changeReinforcement}.
+     */
+    function changeReinforcement(uint256 conditionId, uint128 newReinforcement)
+        external
+        restricted(this.changeReinforcement.selector)
+    {
+        Condition storage condition = _getCondition(conditionId);
+        _conditionIsRunning(condition);
+
+        uint128 reinforcement = condition.reinforcement;
+        uint128 newFund = condition.fund;
+
+        if (newReinforcement == reinforcement) revert NothingChanged();
+
+        if (newReinforcement > reinforcement) {
+            newFund += newReinforcement - reinforcement;
+        } else {
+            if (newFund < reinforcement - newReinforcement)
+                revert InsufficientFund();
+            newFund -= reinforcement - newReinforcement;
+        }
+
+        if (
+            newFund <
+            Math.maxSum(condition.payouts, condition.winningOutcomesCount)
+        ) revert IncorrectReinforcement();
+
+        condition.reinforcement = newReinforcement;
+        condition.fund = newFund;
+
+        _applyOdds(
+            condition,
+            CoreTools.calcOdds(
+                condition.virtualFunds,
+                condition.margin,
+                condition.winningOutcomesCount
+            )
+        );
+        emit ReinforcementChanged(conditionId, newReinforcement);
     }
 
     /**
@@ -127,68 +176,6 @@ abstract contract CoreBase is OwnableUpgradeable, ICoreBase {
     }
 
     /**
-     * @notice Liquidity Pool: Resolve affiliate's contribution to total profit that is not rewarded yet.
-     * @param  affiliate address indicated as an affiliate when placing bets
-     * @param data core pre-match affiliate params
-     * @return reward contribution amount
-     */
-    function resolveAffiliateReward(address affiliate, bytes calldata data)
-        external
-        virtual
-        override
-        onlyLp
-        returns (uint256 reward)
-    {
-        uint256[] storage conditionIds = contributedConditionIds.map[affiliate];
-
-        AffiliateParams memory decoded = abi.decode(data, (AffiliateParams));
-
-        uint256 start = decoded.start;
-        if (conditionIds.length == 0) revert NoPendingReward();
-        if (start >= conditionIds.length)
-            revert StartOutOfRange(conditionIds.length);
-
-        uint256 conditionId;
-        Condition storage condition;
-        AffiliateHelper.Contribution memory contribution;
-        uint256 payout;
-
-        uint256 end = (decoded.count != 0 &&
-            start + decoded.count < conditionIds.length)
-            ? start + decoded.count
-            : conditionIds.length;
-        while (start < end) {
-            conditionId = conditionIds[start];
-            condition = conditions[conditionId];
-            if (_isConditionResolved(condition)) {
-                uint256 affiliatesReward = condition.affiliatesReward;
-                if (affiliatesReward > 0) {
-                    contribution = contributions.map[affiliate][conditionId];
-                    uint256 outcomeWinIndex = condition.outcomeWin ==
-                        condition.outcomes[0]
-                        ? 0
-                        : 1;
-                    payout = contribution.payouts[outcomeWinIndex];
-                    if (contribution.totalNetBets > payout) {
-                        reward +=
-                            ((contribution.totalNetBets - payout) *
-                                affiliatesReward) /
-                            affiliatedProfits.map[conditionId][outcomeWinIndex];
-                    }
-                }
-            } else if (!_isConditionCanceled(condition)) {
-                start++;
-                continue;
-            }
-            delete contributions.map[affiliate][conditionId];
-            conditionIds[start] = conditionIds[conditionIds.length - 1];
-            conditionIds.pop();
-            end--;
-        }
-        return reward;
-    }
-
-    /**
      * @notice Calculate the odds of bet with amount `amount` for outcome `outcome` of condition `conditionId`.
      * @param  conditionId the match or condition ID
      * @param  amount amount of tokens to bet
@@ -201,14 +188,16 @@ abstract contract CoreBase is OwnableUpgradeable, ICoreBase {
         uint64 outcome
     ) external view override returns (uint64 odds) {
         Condition storage condition = _getCondition(conditionId);
+        uint256 outcomeIndex = getOutcomeIndex(conditionId, outcome);
+
+        uint128[] memory virtualFunds = condition.virtualFunds;
+        virtualFunds[outcomeIndex] += amount;
         odds = CoreTools
-            .calcOdds(
-                condition.virtualFunds,
-                amount,
-                _getOutcomeIndex(condition, outcome),
-                condition.margin
-            )
-            .toUint64();
+        .calcOdds(
+            virtualFunds,
+            condition.margin,
+            condition.winningOutcomesCount
+        )[outcomeIndex].toUint64();
     }
 
     /**
@@ -225,16 +214,33 @@ abstract contract CoreBase is OwnableUpgradeable, ICoreBase {
     }
 
     /**
-     * @notice Get the count of conditions contributed by `affiliate` that are not rewarded yet.
+     * @notice Get condition's `conditionId` index of outcome `outcome`.
      */
-    function getContributedConditionsCount(address affiliate)
-        external
+    function getOutcomeIndex(uint256 conditionId, uint64 outcome)
+        public
         view
         returns (uint256)
     {
-        return contributedConditionIds.map[affiliate].length;
+        uint256 outcomeNumber = outcomeNumbers[conditionId][outcome];
+        if (outcomeNumber == 0) revert WrongOutcome();
+
+        return outcomeNumber - 1;
     }
 
+    /**
+     * @notice Check if `outcome` is winning outcome of condition `conditionId`.
+     */
+    function isOutcomeWinning(uint256 conditionId, uint64 outcome)
+        public
+        view
+        returns (bool)
+    {
+        return winningOutcomes[conditionId][outcome];
+    }
+
+    /**
+     * @notice Check if condition or game it is bound with is cancelled or not.
+     */
     function isConditionCanceled(uint256 conditionId)
         public
         view
@@ -244,18 +250,20 @@ abstract contract CoreBase is OwnableUpgradeable, ICoreBase {
     }
 
     /**
-     * @notice Get AzuroBet token `tokenId` payout for `account`.
+     * @notice Get the AzuroBet token `tokenId` payout amount.
      * @param  tokenId AzuroBet token ID
-     * @return winnings of the token owner
+     * @return payout for the token
      */
     function viewPayout(uint256 tokenId) public view virtual returns (uint128) {
         Bet storage bet = bets[tokenId];
         if (bet.conditionId == 0) revert BetNotExists();
         if (bet.isPaid) revert AlreadyPaid();
 
-        Condition storage condition = _getCondition(bet.conditionId);
+        uint256 conditionId = bet.conditionId;
+        Condition storage condition = _getCondition(conditionId);
         if (_isConditionResolved(condition)) {
-            if (bet.outcome == condition.outcomeWin) return bet.payout;
+            if (isOutcomeWinning(bet.conditionId, bet.outcome))
+                return bet.payout;
             else return 0;
         }
         if (_isConditionCanceled(condition)) return bet.amount;
@@ -267,118 +275,133 @@ abstract contract CoreBase is OwnableUpgradeable, ICoreBase {
      * @notice Register new condition.
      * @param  gameId the game ID the condition belongs
      * @param  conditionId the match or condition ID according to oracle's internal numbering
-     * @param  odds start odds for [team 1, team 2]
-     * @param  outcomes unique outcomes for the condition [outcome 1, outcome 2]
+     * @param  odds start odds for [team 1, ..., team N]
+     * @param  outcomes unique outcomes for the condition [outcome 1, ..., outcome N]
      * @param  reinforcement maximum amount of liquidity intended to condition reinforcement
      * @param  margin bookmaker commission
+     * @param  winningOutcomesCount the number of winning outcomes for the condition
      */
     function _createCondition(
         uint256 gameId,
         uint256 conditionId,
-        uint64[2] calldata odds,
-        uint64[2] calldata outcomes,
+        uint256[] calldata odds,
+        uint64[] calldata outcomes,
         uint128 reinforcement,
-        uint64 margin
+        uint64 margin,
+        uint8 winningOutcomesCount
     ) internal {
         if (conditionId == 0) revert IncorrectConditionId();
-        if (outcomes[0] == outcomes[1]) revert SameOutcomes();
         if (margin > FixedMath.ONE) revert IncorrectMargin();
 
-        Condition storage newCondition = conditions[conditionId];
-        if (newCondition.gameId != 0) revert ConditionAlreadyCreated();
+        uint256 length = outcomes.length;
+        if (length < 2 || length > MAX_OUTCOMES_COUNT)
+            revert IncorrectOutcomesCount();
+        if (odds.length != length) revert OutcomesAndOddsCountDiffer();
+        if (winningOutcomesCount == 0 || winningOutcomesCount >= length)
+            revert IncorrectWinningOutcomesCount();
 
-        newCondition.funds = [reinforcement, reinforcement];
-        _applyOdds(newCondition, odds);
-        newCondition.reinforcement = reinforcement;
-        newCondition.gameId = gameId;
-        newCondition.margin = margin;
-        newCondition.outcomes = outcomes;
-        newCondition.oracle = msg.sender;
-        newCondition.leaf = lp.getLeaf();
+        Condition storage condition = conditions[conditionId];
+        if (condition.gameId != 0) revert ConditionAlreadyCreated();
 
-        emit ConditionCreated(gameId, conditionId);
+        condition.payouts = new uint128[](length);
+        condition.virtualFunds = new uint128[](length);
+        for (uint256 i = 0; i < length; ++i) {
+            uint64 outcome = outcomes[i];
+            if (outcomeNumbers[conditionId][outcome] != 0)
+                revert DuplicateOutcomes(outcome);
+            outcomeNumbers[conditionId][outcome] = i + 1;
+        }
+
+        condition.reinforcement = reinforcement;
+        condition.fund = reinforcement;
+        condition.gameId = gameId;
+        condition.margin = margin;
+        condition.winningOutcomesCount = winningOutcomesCount;
+        condition.oracle = msg.sender;
+        condition.lastDepositId = lp.getLastDepositId();
+        _applyOdds(condition, odds);
+
+        emit ConditionCreated(gameId, conditionId, outcomes);
     }
 
     /**
-     * @notice Indicate outcome `outcomeWin` as happened in condition `conditionId`.
-     * @notice Only condition creator can resolve it.
-     * @param  conditionId the match or condition ID
-     * @param  outcomeWin ID of happened condition's outcome
+     * @notice Resolves a condition by updating its state and outcome information, updating Liquidity Pool liquidity and
+     *         calculating and distributing payouts and rewards to relevant parties.
+     * @param  condition the condition pointer
+     * @param  conditionId the condition ID
+     * @param  result the ConditionState enum value representing the result of the condition
+     * @param  winningOutcomes_ the IDs of the winning outcomes of the condition. Set as empty array if the condition is canceled
+     * @param  payout the payout amount to be distributed between bettors
      */
-    function _resolveCondition(uint256 conditionId, uint64 outcomeWin)
-        internal
-    {
-        Condition storage condition = _getCondition(conditionId);
-        address oracle = condition.oracle;
-        if (msg.sender != oracle) revert OnlyOracle(oracle);
-        {
-            (uint64 timeOut, bool gameIsCanceled) = lp.getGameInfo(
-                condition.gameId
-            );
-            if (
-                // TODO: Use only `_isConditionCanceled` to check if condition or its game is canceled
-                gameIsCanceled ||
-                condition.state == ConditionState.CANCELED ||
-                _isConditionResolved(condition)
-            ) revert ConditionAlreadyResolved();
-
-            timeOut += 1 minutes;
-            if (block.timestamp < timeOut) revert ResolveTooEarly(timeOut);
+    function _resolveCondition(
+        Condition storage condition,
+        uint256 conditionId,
+        ConditionState result,
+        uint64[] memory winningOutcomes_,
+        uint128 payout
+    ) internal {
+        condition.state = result;
+        for (uint256 i = 0; i < winningOutcomes_.length; ++i) {
+            winningOutcomes[conditionId][winningOutcomes_[i]] = true;
         }
-        uint256 outcomeIndex = _getOutcomeIndex(condition, outcomeWin);
-        uint256 oppositeIndex = 1 - outcomeIndex;
-
-        condition.outcomeWin = outcomeWin;
-        condition.state = ConditionState.RESOLVED;
 
         uint128 lockedReserve;
         uint128 profitReserve;
         {
+            uint128[] memory payouts = condition.payouts;
+            uint128 fund = condition.fund;
             uint128 reinforcement = condition.reinforcement;
-            uint128[2] memory funds = condition.funds;
-            lockedReserve = _calcReserve(reinforcement, funds);
-            profitReserve =
-                lockedReserve +
-                funds[oppositeIndex] -
-                reinforcement;
+            lockedReserve = _calcReserve(
+                fund,
+                condition.reinforcement,
+                payouts,
+                condition.totalNetBets,
+                condition.winningOutcomesCount
+            );
+            profitReserve = lockedReserve + fund - reinforcement - payout;
         }
 
-        uint128 affiliatesReward = lp.addReserve(
+        lp.addReserve(
             condition.gameId,
             lockedReserve,
             profitReserve,
-            condition.leaf
-        );
-        if (affiliatesReward > 0) condition.affiliatesReward = affiliatesReward;
-
-        AffiliateHelper.delAffiliatedProfitOutcome(
-            affiliatedProfits,
-            conditionId,
-            oppositeIndex
+            condition.lastDepositId
         );
 
         emit ConditionResolved(
             conditionId,
-            uint8(ConditionState.RESOLVED),
-            outcomeWin,
+            uint8(result),
+            winningOutcomes_,
             profitReserve.toInt128() - lockedReserve.toInt128()
         );
     }
 
     /**
-     * @notice Calculate the distribution of available fund into [outcome1Fund, outcome2Fund] compliant to odds `odds`
+     * @notice Calculate the distribution of available fund into [outcome1Fund,..., outcomeNFund] compliant to odds `odds`
      *         and set it as condition virtual funds.
      */
-    function _applyOdds(Condition storage condition, uint64[2] calldata odds)
+    function _applyOdds(Condition storage condition, uint256[] memory odds)
         internal
     {
-        if (odds[0] == 0 || odds[1] == 0) revert ZeroOdds();
+        uint256 length = odds.length;
+        uint256 normalizer;
+        for (uint256 i = 0; i < length; ++i) {
+            uint256 odds_ = odds[i];
+            if (odds_ == 0) revert ZeroOdds();
+            normalizer += FixedMath.ONE.div(odds_);
+        }
 
-        uint128 fund = Math.min(condition.funds[0], condition.funds[1]);
-        uint128 fund0 = uint128(
-            (uint256(fund) * odds[1]) / (odds[0] + odds[1])
-        );
-        condition.virtualFunds = [fund0, fund - fund0];
+        uint256 fund = condition.fund -
+            Math.maxSum(condition.payouts, condition.winningOutcomesCount);
+        uint256 maxVirtualFund = fund / condition.winningOutcomesCount;
+        // Multiplying by "FixedMath.ONE" reduces the gas cost of the loop below
+        uint256 normalizedFund = (fund * FixedMath.ONE).div(normalizer);
+        for (uint256 i = 0; i < length; ++i) {
+            uint256 virtualFund = normalizedFund / odds[i];
+            if (virtualFund >= maxVirtualFund) revert CoreTools.IncorrectOdds();
+
+            condition.virtualFunds[i] = uint128(virtualFund);
+        }
     }
 
     /**
@@ -386,59 +409,40 @@ abstract contract CoreBase is OwnableUpgradeable, ICoreBase {
      */
     function _changeFunds(
         Condition storage condition,
-        uint128[2] memory funds,
-        uint128[2] memory newFunds
+        uint256 outcomeIndex,
+        uint128 amount,
+        uint128 payout
     ) internal {
+        uint128[] memory payouts = condition.payouts;
         uint128 reinforcement = condition.reinforcement;
+        uint128 totalNetBets = condition.totalNetBets;
+        uint128 fund = condition.fund;
+        uint8 winningOutcomesCount = condition.winningOutcomesCount;
+        int128 reserve = _calcReserve(
+            fund,
+            reinforcement,
+            payouts,
+            totalNetBets,
+            winningOutcomesCount
+        ).toInt128();
+
+        fund += amount;
+        payouts[outcomeIndex] += payout;
+        totalNetBets += amount;
         lp.changeLockedLiquidity(
             condition.gameId,
-            _calcReserve(reinforcement, newFunds).toInt128() -
-                _calcReserve(reinforcement, funds).toInt128()
+            _calcReserve(
+                fund,
+                reinforcement,
+                payouts,
+                totalNetBets,
+                winningOutcomesCount
+            ).toInt128() - reserve
         );
-        condition.funds = newFunds;
-    }
 
-    /**
-     * @notice Resolve AzuroBet token `tokenId` payout.
-     * @param  tokenId AzuroBet token ID
-     * @return winning account
-     * @return amount of winnings
-     */
-    function _resolvePayout(uint256 tokenId)
-        internal
-        returns (address, uint128)
-    {
-        uint128 amount = viewPayout(tokenId);
-
-        bets[tokenId].isPaid = true;
-        return (azuroBet.ownerOf(tokenId), amount);
-    }
-
-    /**
-     * @notice Add information about the bet made from an affiliate.
-     * @param  affiliate_ address indicated as an affiliate when placing bet
-     * @param  conditionId the match or condition ID
-     * @param  betAmount amount of tokens is bet from the affiliate
-     * @param  payout possible bet winnings
-     * @param  outcomeIndex index of predicted outcome
-     */
-    function _updateContribution(
-        address affiliate_,
-        uint256 conditionId,
-        uint128 betAmount,
-        uint128 payout,
-        uint256 outcomeIndex
-    ) internal {
-        AffiliateHelper.updateContribution(
-            contributions,
-            contributedConditionIds,
-            affiliatedProfits,
-            affiliate_,
-            conditionId,
-            betAmount,
-            payout,
-            outcomeIndex
-        );
+        condition.fund = fund;
+        condition.payouts[outcomeIndex] = payouts[outcomeIndex];
+        condition.totalNetBets = totalNetBets;
     }
 
     /**
@@ -453,29 +457,32 @@ abstract contract CoreBase is OwnableUpgradeable, ICoreBase {
         virtual
     {
         if (condition.state != ConditionState.CREATED)
-            revert ActionNotAllowed();
+            revert ConditionNotRunning();
         (uint64 startsAt, bool gameIsCanceled) = lp.getGameInfo(
             condition.gameId
         );
         if (gameIsCanceled || block.timestamp >= startsAt)
-            revert ActionNotAllowed();
+            revert ConditionNotRunning();
     }
 
     /**
      * @notice Calculate the amount of liquidity to be reserved.
      */
-    function _calcReserve(uint128 reinforcement, uint128[2] memory funds)
-        internal
-        pure
-        returns (uint128)
-    {
+    function _calcReserve(
+        uint128 fund,
+        uint128 reinforcement,
+        uint128[] memory payouts,
+        uint256 totalNetBets,
+        uint8 winningOutcomesCount
+    ) internal pure returns (uint128) {
+        uint256 maxPayout = Math.maxSum(payouts, winningOutcomesCount);
+        if (totalNetBets > maxPayout) maxPayout = totalNetBets;
         return
-            Math
-                .max(
-                    Math.diffOrZero(reinforcement, funds[0]),
-                    Math.diffOrZero(reinforcement, funds[1])
-                )
-                .toUint128();
+            (
+                (fund > reinforcement)
+                    ? Math.diffOrZero(maxPayout, fund - reinforcement)
+                    : maxPayout + reinforcement - fund
+            ).toUint128();
     }
 
     function _checkOnlyLp() internal view {
@@ -494,20 +501,6 @@ abstract contract CoreBase is OwnableUpgradeable, ICoreBase {
         if (condition.gameId == 0) revert ConditionNotExists();
 
         return condition;
-    }
-
-    /**
-     * @notice Get condition's index of outcome `outcome`.
-     * @dev    Throw if the condition haven't outcome `outcome` as possible
-     * @param  condition the condition pointer
-     * @param  outcome outcome ID
-     */
-    function _getOutcomeIndex(Condition storage condition, uint64 outcome)
-        internal
-        pure
-        returns (uint256)
-    {
-        return CoreTools.getOutcomeIndex(condition, outcome);
     }
 
     /**

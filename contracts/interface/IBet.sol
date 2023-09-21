@@ -5,10 +5,12 @@ pragma solidity ^0.8.9;
 interface IBet {
     struct BetData {
         address affiliate; // address indicated as an affiliate when placing bet
+        uint64 minOdds;
         bytes data; // core-specific customized bet data
     }
 
     error BetNotExists();
+    error SmallOdds();
 
     /**
      * @notice Register new bet.

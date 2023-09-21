@@ -26,7 +26,7 @@ contract LiquidityTree {
     error IncorrectPercent();
 
     /**
-     * @dev initializing LIQUIDITYNODES and nextNode. 
+     * @dev initializing LIQUIDITYNODES and nextNode.
      * @dev LIQUIDITYNODES is count of liquidity (segment) tree leaves contains single liquidity addings
      * @dev liquidity (segment) tree build as array of 2*LIQUIDITYNODES count, top node has id #1 (id #0 not used)
      * @dev liquidity (segment) tree leaves is array [LIQUIDITYNODES, 2*LIQUIDITYNODES-1]

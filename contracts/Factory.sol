@@ -75,7 +75,6 @@ contract Factory is OwnableUpgradeable {
      * @param  minDepo minimum liquidity deposit
      * @param  daoFee share of the profits due to the DAO
      * @param  dataProviderFee share of the profits due to Data Provider
-     * @param  affiliateFee share of the profits due to affiliates
      * @param  coreType name of the Core type to plug in first
      */
     function createPool(
@@ -83,7 +82,6 @@ contract Factory is OwnableUpgradeable {
         uint128 minDepo,
         uint64 daoFee,
         uint64 dataProviderFee,
-        uint64 affiliateFee,
         string calldata coreType
     ) external {
         address accessAddress = address(new BeaconProxy(accessBeacon, ""));
@@ -99,8 +97,7 @@ contract Factory is OwnableUpgradeable {
             token,
             minDepo,
             daoFee,
-            dataProviderFee,
-            affiliateFee
+            dataProviderFee
         );
         lp.transferOwnership(msg.sender);
         registeredLPs[lpAddress] = true;

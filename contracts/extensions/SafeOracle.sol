@@ -3,14 +3,10 @@
 pragma solidity ^0.8.9;
 
 import "../interface/ICoreBase.sol";
-import "../interface/ILPExtended.sol";
+import "../interface/ILP.sol";
 import "../interface/ISafeOracle.sol";
 import "../utils/OwnableUpgradeable.sol";
 import "@uniswap/lib/contracts/libraries/TransferHelper.sol";
-
-interface ICoreBaseExtended is ICoreBase {
-    function lp() external view returns (address);
-}
 
 interface IFactory {
     function checkLP(address lp) external view;
@@ -99,22 +95,22 @@ contract SafeOracle is OwnableUpgradeable, ISafeOracle {
         address core,
         uint256 gameId,
         uint256 conditionId,
-        uint64[2] calldata odds,
-        uint64[2] calldata outcomes,
+        uint256[] calldata odds,
+        uint64[] calldata outcomes,
         uint128 reinforcement,
         uint64 margin,
+        uint8 winningOutcomesCount,
         uint64 proposeDeadline
     ) external {
         if (proposeDeadline < block.timestamp)
             revert IncorrectProposeDeadline();
-        address lpAddress = ICoreBaseExtended(core).lp();
-        factory.checkLP(lpAddress);
+        ILP lp = ICoreBase(core).lp();
+        factory.checkLP(address(lp));
 
-        ILPExtended lp = ILPExtended(lpAddress);
         lp.checkAccess(
             msg.sender,
             core,
-            ICoreBaseExtended(core).createCondition.selector
+            ICoreBase(core).createCondition.selector
         );
         lp.checkCore(core);
         if (ICoreBase(core).getCondition(conditionId).gameId != 0)
@@ -128,13 +124,14 @@ contract SafeOracle is OwnableUpgradeable, ISafeOracle {
         condition.insurance = insurance_;
         _payInsurance(insurance_);
 
-        ICoreBaseExtended(core).createCondition(
+        ICoreBase(core).createCondition(
             gameId,
             conditionId,
             odds,
             outcomes,
             reinforcement,
-            margin
+            margin,
+            winningOutcomesCount
         );
 
         emit Created(core, conditionId, msg.sender, proposeDeadline);
@@ -171,16 +168,16 @@ contract SafeOracle is OwnableUpgradeable, ISafeOracle {
     function resolveCondition(
         address core,
         uint256 conditionId,
-        uint64 outcomeWin
+        uint64[] calldata winningOutcomes
     )
         external
         resolver(
             core,
             conditionId,
             abi.encodeWithSignature(
-                "resolveCondition(uint256,uint64)",
+                "resolveCondition(uint256,uint64[])",
                 conditionId,
-                outcomeWin
+                winningOutcomes
             )
         )
     {}
@@ -280,7 +277,7 @@ contract SafeOracle is OwnableUpgradeable, ISafeOracle {
         external
     {
         Condition storage condition = _getCondition(core, conditionId);
-        if (!ICoreBaseExtended(core).isConditionCanceled(conditionId))
+        if (!ICoreBase(core).isConditionCanceled(conditionId))
             revert ConditionNotCanceled();
 
         ConditionState state = condition.state;
@@ -426,7 +423,7 @@ contract SafeOracle is OwnableUpgradeable, ISafeOracle {
         internal
         view
     {
-        if (ICoreBaseExtended(core).isConditionCanceled(conditionId))
+        if (ICoreBase(core).isConditionCanceled(conditionId))
             revert ConditionCanceled();
     }
 
