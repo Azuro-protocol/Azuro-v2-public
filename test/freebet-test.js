@@ -1,29 +1,26 @@
 const { expect } = require("chai");
-const { constants, BigNumber } = require("ethers");
-const { parseUnits } = require("ethers/lib/utils");
-const { ethers } = require("hardhat");
+const { constants } = require("ethers");
+const { ethers, network } = require("hardhat");
 const {
   getBlockTime,
   tokens,
   prepareStand,
   prepareAccess,
   createCondition,
-  timeShiftBy,
+  timeShift,
   createGame,
   addRole,
   grantRole,
+  getPluggedCore,
+  prepareRoles,
 } = require("../utils/utils");
 const { MULTIPLIER, FREEBET_ADDRESS, FORKING, UPGRADE_TEST } = require("../utils/constants");
 
 const LIQUIDITY = tokens(2000000);
-const ONE_WEEK = 604800;
 const ONE_HOUR = 3600;
 
 const OUTCOMEWIN = 1;
 const OUTCOMELOSE = 2;
-const OUTCOMES = [OUTCOMEWIN, [OUTCOMELOSE]];
-
-const odds = (num) => parseUnits(num, 9);
 
 async function expectTuple(txRes, ...args) {
   const [...results] = await txRes;
@@ -65,22 +62,90 @@ function initFixtureTree(provider) {
   return wrapLayer;
 }
 
+const makeFreeBetCustomized = async (
+  freeBet,
+  manager,
+  bettor,
+  chainId,
+  freeBetId,
+  owner,
+  amount,
+  freeBetMinOdds,
+  expiresAt,
+  core,
+  conditionId,
+  outcome,
+  deadline,
+  minOdds
+) => {
+  const freeBetData = {
+    chainId: chainId,
+    freeBetId: freeBetId,
+    owner: owner.address,
+    amount: amount,
+    minOdds: freeBetMinOdds,
+    expiresAt: expiresAt,
+  };
+
+  const messageHash = ethers.utils.keccak256(
+    ethers.utils.defaultAbiCoder.encode(
+      ["uint256", "uint256", "address", "uint128", "uint64", "uint64"],
+      Object.values(freeBetData)
+    )
+  );
+  const signedMessage = await manager.signMessage(ethers.utils.arrayify(messageHash));
+
+  return await freeBet
+    .connect(bettor)
+    .bet(freeBetData, signedMessage, core.address, conditionId, outcome, deadline, minOdds);
+};
+
+const makeFreeBet = async (
+  freeBet,
+  manager,
+  freeBetId,
+  bettor,
+  amount,
+  core,
+  conditionId,
+  outcome,
+  deadline,
+  minOdds
+) => {
+  const chainId = await network.provider.send("eth_chainId");
+  return await makeFreeBetCustomized(
+    freeBet,
+    manager,
+    bettor,
+    chainId,
+    freeBetId,
+    bettor,
+    amount,
+    minOdds,
+    deadline,
+    core,
+    conditionId,
+    outcome,
+    deadline,
+    minOdds
+  );
+};
+
 describe("FreeBet test", function () {
   const wrapLayer = initFixtureTree(ethers.provider);
 
-  let factoryOwner, poolOwner, dataProvider, bettor1, oracle, oracle2, maintainer, bettor2, bettor3, affiliate;
-  let access, core, wxDAI, lp, azuroBet, freeBetFactory, freeBetFactoryAccess, freeBet;
-  let roleIds, now;
-  let gameId = 0;
+  let chainId;
+
+  let factoryOwner, poolOwner, bettor, dataProvider, oracle, oracle2, manager, affiliate;
+  let factory, access, core, wxDAI, lp, azuroBet, freeBetFactory, freeBetFactoryAccess, freeBet;
+  let core2, azuroBet2;
+  let roleIds, time;
+  let freeBetId = 1,
+    gameId = 1,
+    condId = 1;
 
   const reinforcement = constants.WeiPerEther.mul(20000); // 10%
   const marginality = MULTIPLIER * 0.05; // 5%
-
-  const URI = "https://smth.com";
-
-  let newBet, newBet2;
-  let condId;
-  let balanceFreebetBefore;
 
   const pool1 = 5000000;
   const pool2 = 5000000;
@@ -88,37 +153,31 @@ describe("FreeBet test", function () {
   const minDepo = tokens(10);
   const daoFee = MULTIPLIER * 0.09; // 9%
   const dataProviderFee = MULTIPLIER * 0.01; // 1%
+  const affiliateFee = MULTIPLIER * 0.6; // 60%
 
-  async function deployAndInit() {
-    [factoryOwner, poolOwner, dataProvider, bettor1, oracle, oracle2, maintainer, bettor2, bettor3, affiliate] =
-      await ethers.getSigners();
+  const freeBetMinOdds = MULTIPLIER;
+  const betAmount = tokens(100);
+  const balanceFreeBetBefore = tokens(1000);
 
-    ({ access, core, wxDAI, lp, azuroBet, roleIds } = await prepareStand(
+  async function deployAndRelease() {
+    [factoryOwner, poolOwner, bettor, dataProvider, oracle, oracle2, manager, affiliate] = await ethers.getSigners();
+
+    ({ factory, access, core, wxDAI, lp, azuroBet, roleIds } = await prepareStand(
       ethers,
       factoryOwner,
       poolOwner,
       dataProvider,
-      bettor1,
+      affiliate,
+      bettor,
       minDepo,
       daoFee,
       dataProviderFee,
+      affiliateFee,
       LIQUIDITY
     ));
-    await prepareAccess(access, poolOwner, oracle.address, oracle2.address, maintainer.address, roleIds);
+    await prepareAccess(access, poolOwner, oracle.address, oracle2.address, manager.address, roleIds);
 
-    now = await getBlockTime(ethers);
-    condId = 13253453;
-
-    newBet = {
-      amount: tokens(100),
-      minOdds: odds("1.5"),
-      durationTime: BigNumber.from(ONE_WEEK),
-    };
-    newBet2 = {
-      amount: tokens(150),
-      minOdds: odds("1.4"),
-      durationTime: BigNumber.from(ONE_WEEK / 7),
-    };
+    time = await getBlockTime(ethers);
 
     const Access = await ethers.getContractFactory("Access", { signer: factoryOwner });
     const FreeBetFactory = await ethers.getContractFactory("FreeBetFactory", { signer: factoryOwner });
@@ -149,14 +208,14 @@ describe("FreeBet test", function () {
       const freeBetDeployerRoleId = await addRole(freeBetFactoryAccess, factoryOwner, "FreeBet Deployer");
       await freeBetFactoryAccess.connect(factoryOwner).bindRole({
         target: freeBetFactory.address,
-        selector: "0x04209123",
+        selector: "0xe80568e3",
         roleId: freeBetDeployerRoleId,
       });
       await grantRole(freeBetFactoryAccess, factoryOwner, poolOwner.address, freeBetDeployerRoleId);
 
       const txCreateFreeBet = await freeBetFactory
         .connect(poolOwner)
-        .createFreeBet(lp.address, "XYZFreeBet", "XFBET", affiliate.address, maintainer.address);
+        .createFreeBet(lp.address, affiliate.address, manager.address);
       const receipt = await txCreateFreeBet.wait();
       let iface = new ethers.utils.Interface(
         freeBetFactory.interface.format(ethers.utils.FormatTypes.full).filter((x) => {
@@ -169,486 +228,649 @@ describe("FreeBet test", function () {
 
     await factoryOwner.sendTransaction({ to: wxDAI.address, value: tokens(8_000_000) });
 
-    await wxDAI.transfer(maintainer.address, tokens(10000));
+    await wxDAI.transfer(manager.address, tokens(10000));
 
-    // funding freeBet
-    await wxDAI.transfer(freeBet.address, tokens(1000));
-    balanceFreebetBefore = await wxDAI.balanceOf(freeBet.address);
+    await createGame(lp, oracle, ++gameId, time + ONE_HOUR);
+    await createCondition(
+      core,
+      oracle,
+      gameId,
+      condId,
+      [pool2, pool1],
+      [OUTCOMEWIN, OUTCOMELOSE],
+      reinforcement,
+      marginality,
+      false
+    );
 
-    await createGame(lp, oracle, ++gameId, now + ONE_HOUR);
+    const PrematchCore = await ethers.getContractFactory("PrematchCore", {
+      signer: poolOwner,
+      unsafeAllowCustomTypes: true,
+    });
 
-    await createCondition(core, oracle, gameId, condId, [pool2, pool1], OUTCOMES, reinforcement, marginality);
+    const txPlugCore = await factory.connect(poolOwner).plugCore(lp.address, "pre-match");
+    core2 = await PrematchCore.attach(await getPluggedCore(txPlugCore));
+
+    const AzuroBet = await ethers.getContractFactory("AzuroBet");
+    const azuroBet2Address = await core2.azuroBet();
+    azuroBet2 = await AzuroBet.attach(azuroBet2Address);
+
+    const roleIds2 = await prepareRoles(access, poolOwner, lp, core2);
+    await grantRole(access, poolOwner, oracle.address, roleIds2.oracle);
+    await createCondition(
+      core2,
+      oracle,
+      gameId,
+      condId,
+      [pool2, pool1],
+      [OUTCOMEWIN, OUTCOMELOSE],
+      reinforcement,
+      marginality,
+      false
+    );
+
+    await wxDAI.connect(factoryOwner).approve(freeBet.address, tokens(100000));
+    await wxDAI.connect(factoryOwner).transfer(freeBet.address, balanceFreeBetBefore);
+
+    time = await getBlockTime(ethers);
+    chainId = await network.provider.send("eth_chainId");
   }
 
-  wrapLayer(deployAndInit);
+  wrapLayer(deployAndRelease);
 
-  it("Check FreeBet Factory access", async () => {
-    await expect(
-      freeBetFactory
-        .connect(factoryOwner)
-        .createFreeBet(lp.address, "XYZFreeBet", "XFBET", affiliate.address, maintainer.address)
-    ).to.be.revertedWithCustomError(freeBetFactoryAccess, "AccessNotGranted");
-  });
-  it("Check FreeBet beacon owner", async () => {
-    const freeBetBeaconAddress = await freeBetFactory.freeBetBeacon();
-    const UpgradeableBeacon = await ethers.getContractFactory("UpgradeableBeacon");
-    const freeBetBeacon = await UpgradeableBeacon.attach(freeBetBeaconAddress);
-    expect(await freeBetBeacon.owner()).to.be.equal(factoryOwner.address);
-  });
-  it("Check changing URI", async () => {
-    await freeBet.connect(poolOwner).setBaseURI(URI);
-    expect(await freeBet.baseURI()).to.be.equal(URI);
-  });
-  it("Check changing affiliate", async () => {
-    const expectedOdds = await core.calcOdds(condId, tokens(50), OUTCOMEWIN);
-    const azurobetId = (await azuroBet.lastTokenId()).add(1);
-
-    await freeBet.connect(maintainer).mint(bettor1.address, newBet);
-
-    await freeBet.connect(poolOwner).setAffiliate(bettor1.address);
-    const tx = freeBet
-      .connect(bettor1)
-      .redeem(core.address, 1, condId, tokens(50), OUTCOMEWIN, now + ONE_HOUR, odds("1.5"));
-
-    await expect(tx)
-      .to.emit(core, "NewBet")
-      .withArgs(freeBet.address, bettor1.address, condId, azurobetId, OUTCOMEWIN, tokens(50), expectedOdds, [
-        reinforcement.div(2).add(tokens(50)),
-        reinforcement.div(2).sub(tokens(50).mul(expectedOdds.sub(MULTIPLIER)).div(MULTIPLIER)),
-      ]);
-  });
-  it("Check supportsInterface EIP165, ERC721", async () => {
-    expect(await freeBet.supportsInterface(0x01ffc9a7)).to.be.equal(true); // IERC165Upgradeable
-    expect(await freeBet.supportsInterface(0x80ac58cd)).to.be.equal(true); // IERC721Upgradeable
-    expect(await freeBet.supportsInterface(0x5b5e139f)).to.be.equal(true); // IERC721MetadataUpgradeable
-  });
-  it("Check only owner", async () => {
-    await expect(freeBet.connect(bettor1).setBaseURI(URI)).to.be.revertedWith("Ownable: account is not the owner");
-    await expect(freeBet.connect(maintainer).setLp(lp.address)).to.be.revertedWith("Ownable: account is not the owner");
-  });
-  it("Check only maintainer", async () => {
-    await expect(freeBet.connect(bettor1).withdrawReserve(100)).to.be.revertedWithCustomError(freeBet, "OnlyManager");
-    await expect(freeBet.connect(bettor1).mint(bettor2.address, newBet)).to.be.revertedWithCustomError(
-      freeBet,
-      "OnlyManager"
-    );
-    await expect(
-      freeBet.connect(poolOwner).mintBatch([bettor2.address, bettor3.address], newBet)
-    ).to.be.revertedWithCustomError(freeBet, "OnlyManager");
-  });
-
-  it("Should add funds for any user", async () => {
-    const balanceBefore = await wxDAI.balanceOf(bettor1.address);
-    await wxDAI.connect(bettor1).approve(freeBet.address, tokens(1000));
-    await wxDAI.connect(bettor1).transfer(freeBet.address, tokens(1000));
-    expect(await wxDAI.balanceOf(bettor1.address)).to.eq(balanceBefore.sub(tokens(1000)));
-    expect(await wxDAI.balanceOf(freeBet.address)).to.eq(balanceFreebetBefore.add(tokens(1000)));
-  });
-  it("Should withdraw all funds for maintainer", async () => {
-    const balanceBefore = await wxDAI.balanceOf(maintainer.address);
-    await freeBet.connect(maintainer).withdrawReserve(tokens(1000));
-    expect(await wxDAI.balanceOf(maintainer.address)).to.eq(balanceBefore.add(tokens(1000)));
-    expect(await wxDAI.balanceOf(freeBet.address)).to.eq(balanceFreebetBefore.sub(tokens(1000)));
-  });
-  it("Should not withdraw if amount is too big", async () => {
-    await expect(freeBet.connect(maintainer).withdrawReserve(tokens(10000))).to.be.revertedWithCustomError(
-      freeBet,
-      "InsufficientContractBalance"
-    );
-    expect(await wxDAI.balanceOf(freeBet.address)).to.eq(balanceFreebetBefore);
-  });
-
-  it("Should return empty array if no expired bets", async () => {
-    const expired = await freeBet.getExpiredUnresolved(0, 1000);
-    expect(expired[0]).to.eql(new Array(1000).fill(BigNumber.from(0)));
-    expect(expired[1]).to.eq(0);
-  });
-
-  context("Minted freeBet", () => {
-    async function mint() {
-      await freeBet.connect(maintainer).mint(bettor1.address, newBet);
-    }
-
-    wrapLayer(mint);
-
-    it("Should mint successfully", async () => {
-      expect(await freeBet.balanceOf(bettor1.address)).to.eq(1);
-      expect(await freeBet.lockedReserve()).to.eq(newBet.amount);
-      await expect(freeBet.connect(maintainer).mint(bettor1.address, newBet2))
-        .to.emit(freeBet, "FreeBetMinted")
-        .withArgs(bettor1.address, 2, [newBet2.amount, newBet2.minOdds, newBet2.durationTime]);
-      expect(await freeBet.balanceOf(bettor1.address)).to.eq(2);
-      expect(await freeBet.lockedReserve()).to.eq(newBet.amount.add(newBet2.amount));
-      await expectTuple(await freeBet.freeBets(2), newBet2.amount, newBet2.minOdds, newBet2.durationTime);
-      expect(await freeBet.expirationTime(2)).to.be.closeTo(newBet2.durationTime.add(now), 1000);
-    });
-
-    it("Should mint batch", async () => {
-      expect(await freeBet.balanceOf(bettor1.address)).to.eq(1);
-      expect(await freeBet.lockedReserve()).to.eq(newBet.amount);
-      const bettors = [bettor1.address, bettor2.address, bettor3.address];
-      await expect(freeBet.connect(maintainer).mintBatch(bettors, newBet))
-        .to.emit(freeBet, "FreeBetMintedBatch")
-        .withArgs(bettors, 2, 3, [newBet.amount, newBet.minOdds, newBet.durationTime]);
-      await expectTuple(await freeBet.freeBets(2), newBet.amount, newBet.minOdds, newBet.durationTime);
-      await expectTuple(await freeBet.freeBets(3), newBet.amount, newBet.minOdds, newBet.durationTime);
-      await expectTuple(await freeBet.freeBets(4), newBet.amount, newBet.minOdds, newBet.durationTime);
-      expect(await freeBet.lockedReserve()).to.eq(newBet.amount.mul(2).add(newBet.amount.mul(2)));
-      expect(await freeBet.balanceOf(bettor1.address)).to.eq(2);
-    });
-
-    it("Should only burn expired bets", async () => {
-      await freeBet.connect(maintainer).mint(bettor1.address, newBet);
-      await freeBet.connect(maintainer).mintBatch([bettor2.address, bettor3.address], newBet2);
-      expect(await freeBet.lockedReserve()).to.eq(newBet.amount.mul(2).add(newBet2.amount.mul(2)));
-
-      await timeShiftBy(ethers, ONE_WEEK / 2);
-      const [expired, length] = await freeBet.getExpiredUnresolved(0, 100);
-      expect(length).to.eq(2);
-      expect(expired).to.eql([
-        BigNumber.from(3),
-        BigNumber.from(4),
-        ...new Array(100 - length).fill(BigNumber.from(0)),
-      ]);
-      const tx = freeBet.resolveExpired([3, 4]);
-      await expect(tx).to.emit(freeBet, "FreeBetsResolved").withArgs([3, 4], tokens(300));
-      expect((await freeBet.getExpiredUnresolved(0, 100))[0]).to.eql(new Array(100).fill(BigNumber.from(0)));
-      expect(await freeBet.lockedReserve()).to.eq(newBet.amount.mul(2));
-    });
-
-    it("Can't be transferred", async () => {
+  context("Management", () => {
+    it("Check FreeBet Factory access", async () => {
       await expect(
-        freeBet.connect(bettor1).transferFrom(bettor1.address, factoryOwner.address, 1)
-      ).to.be.revertedWithCustomError(freeBet, "NonTransferable");
+        freeBetFactory.connect(factoryOwner).createFreeBet(lp.address, affiliate.address, manager.address)
+      ).to.be.revertedWithCustomError(freeBetFactoryAccess, "AccessNotGranted");
     });
+    it("Check FreeBet beacon owner", async () => {
+      const freeBetBeaconAddress = await freeBetFactory.freeBetBeacon();
+      const UpgradeableBeacon = await ethers.getContractFactory("UpgradeableBeacon");
+      const freeBetBeacon = await UpgradeableBeacon.attach(freeBetBeaconAddress);
+      expect(await freeBetBeacon.owner()).to.be.equal(factoryOwner.address);
+    });
+    it("Check changing affiliate", async () => {
+      const expectedOdds = await core.calcOdds(condId, betAmount, OUTCOMEWIN);
+      const azuroBetId = (await azuroBet.lastTokenId()).add(1);
 
-    it("Should redeem correct freeBet", async () => {
-      const expectedOdds = await core.calcOdds(condId, tokens(50), [OUTCOMEWIN]);
-      const azurobetId = (await azuroBet.lastTokenId()).add(1);
-      expect(await freeBet.lockedReserve()).to.eq(newBet.amount);
-      await expectTuple(await freeBet.freeBets(1), newBet.amount, newBet.minOdds, newBet.durationTime);
-      await expectTuple(
-        await freeBet.azuroBets(azurobetId),
-        ethers.constants.AddressZero,
-        ethers.constants.AddressZero,
-        0,
-        0,
-        0
+      await freeBet.connect(poolOwner).setAffiliate(bettor.address);
+      const tx = await makeFreeBet(
+        freeBet,
+        manager,
+        freeBetId,
+        bettor,
+        betAmount,
+        core,
+        condId,
+        OUTCOMEWIN,
+        time + ONE_HOUR,
+        MULTIPLIER
       );
-      const tx = freeBet
-        .connect(bettor1)
-        .redeem(core.address, 1, condId, tokens(50), OUTCOMEWIN, now + ONE_HOUR, odds("1.5"));
-
-      await expect(tx)
-        .to.emit(freeBet, "FreeBetRedeemed")
-        .withArgs(core.address, bettor1.address, 1, azurobetId, tokens(50));
 
       await expect(tx)
         .to.emit(core, "NewBet")
-        .withArgs(freeBet.address, affiliate.address, condId, azurobetId, OUTCOMEWIN, tokens(50), expectedOdds, [
-          reinforcement.div(2).add(tokens(50)),
-          reinforcement.div(2).sub(tokens(50).mul(expectedOdds.sub(MULTIPLIER)).div(MULTIPLIER)),
+        .withArgs(freeBet.address, bettor.address, condId, azuroBetId, OUTCOMEWIN, betAmount, expectedOdds, [
+          reinforcement.div(2).add(betAmount),
+          reinforcement.div(2).sub(betAmount.mul(expectedOdds.sub(MULTIPLIER)).div(MULTIPLIER)),
         ]);
-
-      await expect(tx).to.emit(wxDAI, "Transfer").withArgs(freeBet.address, lp.address, tokens(50));
-
-      await expectTuple(await freeBet.freeBets(1), newBet.amount.sub(tokens(50)), newBet.minOdds, newBet.durationTime);
-      await expectTuple(await freeBet.azuroBets(azurobetId), core.address, bettor1.address, condId, 1, tokens(50), 0);
-
-      expect(await freeBet.lockedReserve()).to.eq(newBet.amount.sub(tokens(50)));
     });
-
-    it("Shouldn't redeem expired freeBet", async () => {
-      await timeShiftBy(ethers, ONE_WEEK + 60);
-      await expect(
-        freeBet.connect(bettor1).redeem(core.address, 1, condId, tokens(50), [OUTCOMEWIN], now + ONE_HOUR, odds("1.5"))
-      ).to.be.revertedWithCustomError(freeBet, "BetExpired");
+    it("Check only owner", async () => {
+      await expect(freeBet.connect(manager).setAffiliate(affiliate.address)).to.be.revertedWith(
+        "Ownable: account is not the owner"
+      );
+      await expect(freeBet.connect(manager).setLp(lp.address)).to.be.revertedWith("Ownable: account is not the owner");
+      await expect(freeBet.connect(manager).setManager(manager.address)).to.be.revertedWith(
+        "Ownable: account is not the owner"
+      );
     });
-
-    it("Should revert redeem of not owned freeBet", async () => {
-      await expect(
-        freeBet.connect(bettor2).redeem(core.address, 1, condId, tokens(50), [OUTCOMEWIN], now + ONE_HOUR, odds("1.5"))
-      ).to.be.revertedWithCustomError(freeBet, "OnlyBetOwner");
+    it("Should add funds for any bettor", async () => {
+      const balanceBefore = await wxDAI.balanceOf(bettor.address);
+      await wxDAI.connect(bettor).approve(freeBet.address, tokens(1000));
+      await wxDAI.connect(bettor).transfer(freeBet.address, tokens(1000));
+      expect(await wxDAI.balanceOf(bettor.address)).to.eq(balanceBefore.sub(tokens(1000)));
+      expect(await wxDAI.balanceOf(freeBet.address)).to.eq(balanceFreeBetBefore.add(tokens(1000)));
     });
+    it("Should withdraw all funds for manager", async () => {
+      const balanceBefore = await wxDAI.balanceOf(manager.address);
+      await freeBet.connect(manager).withdrawReserve(tokens(1000));
+      expect(await wxDAI.balanceOf(manager.address)).to.eq(balanceBefore.add(tokens(1000)));
+      expect(await wxDAI.balanceOf(freeBet.address)).to.eq(balanceFreeBetBefore.sub(tokens(1000)));
+    });
+    it("Should withdraw unlocked tokens", async () => {
+      const managerBalance = await wxDAI.balanceOf(manager.address);
+      await freeBet.connect(manager).withdrawReserve(balanceFreeBetBefore);
+      expect(await wxDAI.balanceOf(manager.address)).to.be.equal(managerBalance.add(balanceFreeBetBefore));
+    });
+    it("Shouldn't withdraw locked tokens", async () => {
+      const azuroBetId = (await azuroBet.lastTokenId()).add(1);
+      const expectedOdds = await core.calcOdds(condId, betAmount, [OUTCOMEWIN]);
+      await makeFreeBet(
+        freeBet,
+        manager,
+        freeBetId,
+        bettor,
+        betAmount,
+        core,
+        condId,
+        OUTCOMEWIN,
+        time + ONE_HOUR,
+        MULTIPLIER
+      );
 
-    it("Should revert withdraw if requested tokens are locked", async () => {
-      await expect(freeBet.connect(maintainer).withdrawReserve(tokens(1000))).to.be.revertedWithCustomError(
+      await timeShift(time + ONE_HOUR * 2);
+      await core.connect(oracle).resolveCondition(condId, [OUTCOMEWIN]);
+
+      await freeBet.resolvePayout([freeBetId]);
+      const payout = betAmount.mul(expectedOdds).div(MULTIPLIER);
+      expect(await wxDAI.balanceOf(freeBet.address)).to.be.equal(balanceFreeBetBefore.add(payout).sub(betAmount));
+
+      await expect(freeBet.connect(manager).withdrawReserve(balanceFreeBetBefore.add(1))).to.be.revertedWithCustomError(
         freeBet,
         "InsufficientContractBalance"
       );
-      expect(await wxDAI.balanceOf(freeBet.address)).to.eq(tokens(1000));
+      await freeBet.connect(manager).withdrawReserve(balanceFreeBetBefore);
     });
-
-    it("Should let withdraw unlocked tokens", async () => {
-      await freeBet.connect(maintainer).withdrawReserve(tokens(900));
-      await timeShiftBy(ethers, ONE_WEEK + 60);
-      const [ids, length] = await freeBet.getExpiredUnresolved(0, 100);
-      await freeBet.resolveExpired(ids.slice(0, length));
-      await freeBet.connect(maintainer).withdrawReserve(tokens(100));
-      expect(await wxDAI.balanceOf(freeBet.address)).to.eq(0);
+    it("Shouldn't withdraw not by manager", async () => {
+      await expect(freeBet.connect(bettor).withdrawReserve(1)).to.be.revertedWithCustomError(freeBet, "OnlyManager");
     });
+    it("Shouldn't withdraw if amount is too big", async () => {
+      await expect(freeBet.connect(manager).withdrawReserve(tokens(10000))).to.be.revertedWithCustomError(
+        freeBet,
+        "InsufficientContractBalance"
+      );
+      expect(await wxDAI.balanceOf(freeBet.address)).to.eq(balanceFreeBetBefore);
+    });
+  });
+  context("Redeem free bet", () => {
+    it("Should redeem free bet", async () => {
+      const expectedOdds = await core.calcOdds(condId, betAmount, [OUTCOMEWIN]);
+      const condition = await core.getCondition(condId);
+      const azuroBetId = (await azuroBet.lastTokenId()).add(1);
+      const tx = await makeFreeBet(
+        freeBet,
+        manager,
+        freeBetId,
+        bettor,
+        betAmount,
+        core,
+        condId,
+        OUTCOMEWIN,
+        time + ONE_HOUR,
+        MULTIPLIER
+      );
 
-    context("Redeemed on 1 outcome", () => {
-      let odds1;
-      let betAmount;
-      let azurobetId;
+      await expect(tx)
+        .to.emit(freeBet, "NewBet")
+        .withArgs(freeBetId, core.address, bettor.address, azuroBetId, betAmount, freeBetMinOdds, time + ONE_HOUR);
 
-      async function redeem() {
-        betAmount = newBet.amount;
-        odds1 = await core.calcOdds(condId, betAmount, [OUTCOMEWIN]);
-        azurobetId = (await azuroBet.lastTokenId()).add(1);
+      await expect(tx)
+        .to.emit(core, "NewBet")
+        .withArgs(freeBet.address, affiliate.address, condId, azuroBetId, OUTCOMEWIN, betAmount, expectedOdds, [
+          condition.virtualFunds[0].add(betAmount),
+          condition.virtualFunds[1].sub(betAmount.mul(expectedOdds.sub(MULTIPLIER)).div(MULTIPLIER)),
+        ]);
 
-        await freeBet
-          .connect(bettor1)
-          .redeem(core.address, 1, condId, betAmount, [OUTCOMEWIN], now + ONE_HOUR, odds("1.5"));
+      await expect(tx).to.emit(wxDAI, "Transfer").withArgs(freeBet.address, lp.address, betAmount);
+
+      await expectTuple(await freeBet.freeBets(freeBetId++), bettor.address, core.address, azuroBetId, betAmount, 0);
+    });
+    it("Should be no conflict between redeemed free bets in different Cores of the same LP", async () => {
+      const azuroBetId = (await azuroBet.lastTokenId()).add(1);
+      await makeFreeBet(
+        freeBet,
+        manager,
+        freeBetId,
+        bettor,
+        betAmount,
+        core,
+        condId,
+        OUTCOMEWIN,
+        time + ONE_HOUR,
+        MULTIPLIER
+      );
+
+      const azuroBetId2 = (await azuroBet2.lastTokenId()).add(1);
+      const betAmount2 = betAmount.mul(2);
+      await makeFreeBet(
+        freeBet,
+        manager,
+        ++freeBetId,
+        poolOwner,
+        betAmount2,
+        core2,
+        condId,
+        OUTCOMEWIN,
+        time + ONE_HOUR,
+        MULTIPLIER
+      );
+
+      await expectTuple(await freeBet.freeBets(freeBetId - 1), bettor.address, core.address, azuroBetId, betAmount, 0);
+      await expectTuple(
+        await freeBet.freeBets(freeBetId++),
+        poolOwner.address,
+        core2.address,
+        azuroBetId2,
+        betAmount2,
+        0
+      );
+    });
+    it("Shouldn't redeem freeBet with data that does not match the manager's signature", async () => {
+      const freeBetData = {
+        chainId: chainId,
+        freeBetId: freeBetId,
+        owner: bettor.address,
+        amount: betAmount,
+        minOdds: freeBetMinOdds,
+        expiresAt: time + ONE_HOUR,
+      };
+
+      const messageHash = ethers.utils.keccak256(
+        ethers.utils.defaultAbiCoder.encode(
+          ["uint256", "uint256", "address", "uint128", "uint64", "uint64"],
+          Object.values(freeBetData)
+        )
+      );
+      const signedMessage = await manager.signMessage(ethers.utils.arrayify(messageHash));
+
+      const anotherFreeBetData = {
+        chainId: chainId + 1,
+        freeBetId: freeBetId + 1,
+        owner: poolOwner.address,
+        amount: betAmount.add(1),
+        minOdds: freeBetMinOdds + 1,
+        expiresAt: time + ONE_HOUR + 1,
+      };
+
+      for (const field in freeBetData) {
+        const incorrectFreeBetData = Object.assign({}, freeBetData);
+        incorrectFreeBetData[field] = anotherFreeBetData[field];
+        await expect(
+          freeBet
+            .connect(bettor)
+            .bet(incorrectFreeBetData, signedMessage, core.address, condId, OUTCOMEWIN, time + ONE_HOUR, MULTIPLIER)
+        ).to.be.revertedWithCustomError(freeBet, "InvalidSignature");
+      }
+    });
+    it("Shouldn't redeem not owned freeBet", async () => {
+      await expect(
+        makeFreeBetCustomized(
+          freeBet,
+          manager,
+          poolOwner,
+          chainId,
+          freeBetId,
+          bettor,
+          betAmount,
+          freeBetMinOdds,
+          time,
+          core,
+          condId,
+          OUTCOMEWIN,
+          time + ONE_HOUR,
+          freeBetMinOdds
+        )
+      ).to.be.revertedWithCustomError(freeBet, "OnlyFreeBetOwner");
+    });
+    it("Shouldn't redeem freeBet with the same ID", async () => {
+      await makeFreeBet(
+        freeBet,
+        manager,
+        freeBetId,
+        bettor,
+        betAmount,
+        core,
+        condId,
+        OUTCOMEWIN,
+        time + ONE_HOUR,
+        MULTIPLIER
+      );
+      await expect(
+        makeFreeBet(
+          freeBet,
+          manager,
+          freeBetId,
+          bettor,
+          betAmount.add(1),
+          core,
+          condId,
+          OUTCOMEWIN,
+          time + ONE_HOUR,
+          MULTIPLIER
+        )
+      ).to.be.revertedWithCustomError(freeBet, "BetAlreadyClaimed");
+    });
+    it("Shouldn't redeem freeBet from another network", async () => {
+      await expect(
+        makeFreeBetCustomized(
+          freeBet,
+          manager,
+          poolOwner,
+          chainId + 1,
+          freeBetId,
+          bettor,
+          betAmount,
+          freeBetMinOdds,
+          time + ONE_HOUR,
+          core,
+          condId,
+          OUTCOMEWIN,
+          time + ONE_HOUR,
+          freeBetMinOdds
+        )
+      ).to.be.revertedWithCustomError(freeBet, "IncorrectChainId");
+    });
+    it("Shouldn't redeem freeBet with minOdds less than the manager has specified", async () => {
+      await expect(
+        makeFreeBetCustomized(
+          freeBet,
+          manager,
+          bettor,
+          chainId,
+          freeBetId,
+          bettor,
+          betAmount,
+          freeBetMinOdds,
+          time + ONE_HOUR,
+          core,
+          condId,
+          OUTCOMEWIN,
+          time + ONE_HOUR,
+          freeBetMinOdds - 1
+        )
+      ).to.be.revertedWithCustomError(freeBet, "SmallMinOdds");
+    });
+    it("Shouldn't redeem freeBet from another network", async () => {
+      await expect(
+        makeFreeBetCustomized(
+          freeBet,
+          manager,
+          poolOwner,
+          chainId + 1,
+          freeBetId,
+          bettor,
+          betAmount,
+          freeBetMinOdds,
+          time + ONE_HOUR,
+          core,
+          condId,
+          OUTCOMEWIN,
+          time + ONE_HOUR,
+          freeBetMinOdds
+        )
+      ).to.be.revertedWithCustomError(freeBet, "IncorrectChainId");
+    });
+    it("Shouldn't redeem freeBet twice", async () => {
+      await makeFreeBet(
+        freeBet,
+        manager,
+        freeBetId,
+        bettor,
+        betAmount,
+        core,
+        condId,
+        OUTCOMEWIN,
+        time + ONE_HOUR,
+        MULTIPLIER
+      );
+      await expect(
+        makeFreeBet(
+          freeBet,
+          manager,
+          freeBetId,
+          bettor,
+          betAmount,
+          core,
+          condId,
+          OUTCOMEWIN,
+          time + ONE_HOUR,
+          MULTIPLIER
+        )
+      ).to.be.revertedWithCustomError(freeBet, "BetAlreadyClaimed");
+    });
+    it("Shouldn't redeem freeBet if there are insufficient funds in the contract", async () => {
+      await expect(
+        makeFreeBet(
+          freeBet,
+          manager,
+          freeBetId,
+          bettor,
+          balanceFreeBetBefore.add(1),
+          core,
+          condId,
+          OUTCOMEWIN,
+          time + ONE_HOUR,
+          MULTIPLIER
+        )
+      ).to.be.revertedWithCustomError(freeBet, "InsufficientContractBalance");
+    });
+    it("Shouldn't redeem freeBet with locked tokens", async () => {
+      await freeBet.connect(manager).withdrawReserve(balanceFreeBetBefore.sub(betAmount));
+
+      const azuroBetId = (await azuroBet.lastTokenId()).add(1);
+      await makeFreeBet(
+        freeBet,
+        manager,
+        freeBetId,
+        bettor,
+        betAmount,
+        core,
+        condId,
+        OUTCOMEWIN,
+        time + ONE_HOUR,
+        MULTIPLIER
+      );
+
+      await timeShift(time + ONE_HOUR * 2);
+      await core.connect(oracle).resolveCondition(condId, [OUTCOMEWIN]);
+
+      await freeBet.resolvePayout([freeBetId]);
+
+      await freeBet.connect(manager).withdrawReserve(1);
+      await expect(
+        makeFreeBet(
+          freeBet,
+          manager,
+          freeBetId,
+          bettor,
+          betAmount,
+          core,
+          condId,
+          OUTCOMEWIN,
+          time + ONE_HOUR,
+          MULTIPLIER
+        )
+      ).to.be.revertedWithCustomError(freeBet, "InsufficientContractBalance");
+    });
+  });
+  context("Resolve", () => {
+    let odds1;
+    let azuroBetId;
+
+    async function redeem() {
+      odds1 = await core.calcOdds(condId, betAmount, OUTCOMEWIN);
+      azuroBetId = (await azuroBet.lastTokenId()).add(1);
+      await makeFreeBet(
+        freeBet,
+        manager,
+        freeBetId,
+        bettor,
+        betAmount,
+        core,
+        condId,
+        OUTCOMEWIN,
+        time + ONE_HOUR,
+        MULTIPLIER
+      );
+    }
+    wrapLayer(redeem);
+
+    context("Win", () => {
+      let payout;
+
+      async function win() {
+        payout = betAmount.mul(odds1).div(MULTIPLIER);
+        await timeShift(time + ONE_HOUR * 2);
+        await core.connect(oracle).resolveCondition(condId, [OUTCOMEWIN]);
       }
 
-      wrapLayer(redeem);
+      wrapLayer(win);
 
-      context("Win", () => {
-        let payout;
+      it("Should resolve payout by any bettor and burn freeBet", async () => {
+        await expectTuple(await freeBet.freeBets(freeBetId), bettor.address, core.address, azuroBetId, betAmount, 0);
+        expect(await freeBet.lockedReserve()).to.be.equal(0);
 
-        async function win() {
-          payout = betAmount.mul(odds1).div(MULTIPLIER);
-          await timeShiftBy(ethers, ONE_HOUR * 2);
-          await core.connect(oracle).resolveCondition(condId, [OUTCOMEWIN]);
-        }
+        const tx = await freeBet.connect(poolOwner).resolvePayout([freeBetId]);
+        expect(await freeBet.lockedReserve()).to.be.equal(payout.sub(betAmount));
 
-        wrapLayer(win);
+        await expect(tx).to.emit(lp, "BettorWin").withArgs(core.address, freeBet.address, azuroBetId, payout);
+        await expect(tx).to.emit(wxDAI, "Transfer").withArgs(lp.address, freeBet.address, payout);
+        await expectTuple(
+          await freeBet.freeBets(freeBetId),
+          bettor.address,
+          core.address,
+          azuroBetId,
+          0,
+          payout.sub(betAmount)
+        );
 
-        it("Should resolve payout by any user and burn freeBet", async () => {
-          await expectTuple(
-            await freeBet.azuroBets(azurobetId),
-            core.address,
-            bettor1.address,
-            condId,
-            1,
-            newBet.amount,
-            0
-          );
-          const tx = freeBet.connect(bettor2).resolvePayout([azurobetId]);
-
-          await expect(tx).to.emit(lp, "BettorWin").withArgs(core.address, freeBet.address, azurobetId, payout);
-          await expect(tx).to.emit(wxDAI, "Transfer").withArgs(lp.address, freeBet.address, payout);
-          await expectTuple(
-            await freeBet.azuroBets(azurobetId),
-            core.address,
-            bettor1.address,
-            condId,
-            1,
-            0,
-            payout.sub(betAmount)
-          );
-
-          await expect(freeBet.connect(bettor2).resolvePayout([azurobetId])).to.be.revertedWithCustomError(
-            freeBet,
-            "AlreadyResolved"
-          );
-        });
-
-        it("Should Withdraw payout after resolve", async () => {
-          await freeBet.connect(bettor2).resolvePayout([azurobetId]);
-
-          await expectTuple(
-            await freeBet.azuroBets(azurobetId),
-            core.address,
-            bettor1.address,
-            condId,
-            1,
-            0,
-            payout.sub(betAmount)
-          );
-          const tx = freeBet.connect(bettor1).withdrawPayout(azurobetId);
-          await expect(tx).to.emit(wxDAI, "Transfer").withArgs(freeBet.address, bettor1.address, payout.sub(betAmount));
-          await expect(tx)
-            .to.emit(freeBet, "BettorWin")
-            .withArgs(core.address, bettor1.address, azurobetId, payout.sub(betAmount));
-          await expectTuple(await freeBet.azuroBets(azurobetId), core.address, bettor1.address, condId, 1, 0, 0);
-
-          await expect(freeBet.connect(bettor2).resolvePayout([azurobetId])).to.be.revertedWithCustomError(
-            freeBet,
-            "AlreadyResolved"
-          );
-          await expect(freeBet.connect(bettor1).withdrawPayout(azurobetId)).to.not.be.reverted;
-        });
-
-        it("Should resolve and withdraw by calling withdraw", async () => {
-          await expectTuple(
-            await freeBet.azuroBets(azurobetId),
-            core.address,
-            bettor1.address,
-            condId,
-            1,
-            newBet.amount,
-            0
-          );
-          const tx = freeBet.connect(bettor1).withdrawPayout(azurobetId);
-          await expect(tx).to.emit(lp, "BettorWin").withArgs(core.address, freeBet.address, azurobetId, payout);
-          await expect(tx).to.emit(wxDAI, "Transfer").withArgs(lp.address, freeBet.address, payout);
-          await expect(tx).to.emit(wxDAI, "Transfer").withArgs(freeBet.address, bettor1.address, payout.sub(betAmount));
-          await expect(tx)
-            .to.emit(freeBet, "BettorWin")
-            .withArgs(core.address, bettor1.address, azurobetId, payout.sub(betAmount));
-          await expectTuple(await freeBet.azuroBets(azurobetId), core.address, bettor1.address, condId, 1, 0, 0);
-
-          await expect(freeBet.connect(bettor2).resolvePayout([azurobetId])).to.be.revertedWithCustomError(
-            freeBet,
-            "AlreadyResolved"
-          );
-          await expect(freeBet.connect(bettor1).withdrawPayout(azurobetId)).to.not.be.reverted;
-        });
-
-        it("Should revert withdraw payout of not owned Azuro bet", async () => {
-          await expect(freeBet.connect(bettor2).withdrawPayout(azurobetId)).to.be.revertedWithCustomError(
-            freeBet,
-            "OnlyBetOwner"
-          );
-        });
+        await expect(freeBet.connect(poolOwner).resolvePayout([freeBetId])).to.be.revertedWithCustomError(
+          freeBet,
+          "AlreadyResolved"
+        );
       });
+      it("Should Withdraw payout after resolve", async () => {
+        expect(await freeBet.lockedReserve()).to.be.equal(0);
 
-      context("Lose", () => {
-        async function lose() {
-          await timeShiftBy(ethers, ONE_HOUR * 2);
-          await core.connect(oracle).resolveCondition(condId, [2]);
-        }
+        await freeBet.connect(poolOwner).resolvePayout([freeBetId]);
+        expect(await freeBet.lockedReserve()).to.be.equal(payout.sub(betAmount));
 
-        wrapLayer(lose);
+        await expectTuple(
+          await freeBet.freeBets(freeBetId),
+          bettor.address,
+          core.address,
+          azuroBetId,
+          0,
+          payout.sub(betAmount)
+        );
+        const tx = await freeBet.connect(bettor).withdrawPayout(freeBetId);
+        expect(await freeBet.lockedReserve()).to.be.equal(0);
 
-        it("Should resolve 0 payout and burn freeBet", async () => {
-          await expectTuple(
-            await freeBet.azuroBets(azurobetId),
-            core.address,
-            bettor1.address,
-            condId,
-            1,
-            newBet.amount,
-            0
-          );
-          await freeBet.connect(bettor2).resolvePayout([azurobetId]);
+        await expect(tx).to.emit(wxDAI, "Transfer").withArgs(freeBet.address, bettor.address, payout.sub(betAmount));
+        await expect(tx)
+          .to.emit(freeBet, "BettorWin")
+          .withArgs(core.address, bettor.address, freeBetId, payout.sub(betAmount));
+        await expectTuple(await freeBet.freeBets(freeBetId), bettor.address, core.address, azuroBetId, 0, 0);
 
-          await expectTuple(await freeBet.azuroBets(azurobetId), core.address, bettor1.address, condId, 1, 0, 0);
-
-          await expect(freeBet.connect(bettor2).resolvePayout([azurobetId])).to.be.revertedWithCustomError(
-            freeBet,
-            "AlreadyResolved"
-          );
-        });
-
-        it("Should withdraw 0 payout and burn freeBet", async () => {
-          await expectTuple(
-            await freeBet.azuroBets(azurobetId),
-            core.address,
-            bettor1.address,
-            condId,
-            1,
-            newBet.amount,
-            0
-          );
-          const tx = freeBet.connect(bettor1).withdrawPayout(azurobetId);
-
-          await expect(tx).to.not.emit(freeBet, "BettorWin");
-          await expectTuple(await freeBet.azuroBets(azurobetId), core.address, bettor1.address, condId, 1, 0, 0);
-
-          await expect(freeBet.connect(bettor2).resolvePayout([azurobetId])).to.be.revertedWithCustomError(
-            freeBet,
-            "AlreadyResolved"
-          );
-          await expect(freeBet.connect(bettor1).withdrawPayout(azurobetId)).to.not.be.reverted;
-        });
+        await expect(freeBet.connect(poolOwner).resolvePayout([freeBetId])).to.be.revertedWithCustomError(
+          freeBet,
+          "AlreadyResolved"
+        );
+        await expect(freeBet.connect(bettor).withdrawPayout(freeBetId)).to.not.be.reverted;
       });
+      it("Should resolve and withdraw by calling withdraw", async () => {
+        await expectTuple(await freeBet.freeBets(freeBetId), bettor.address, core.address, azuroBetId, betAmount, 0);
+        const tx = await freeBet.connect(bettor).withdrawPayout(freeBetId);
+        await expect(tx).to.emit(lp, "BettorWin").withArgs(core.address, freeBet.address, azuroBetId, payout);
+        await expect(tx).to.emit(wxDAI, "Transfer").withArgs(lp.address, freeBet.address, payout);
+        await expect(tx).to.emit(wxDAI, "Transfer").withArgs(freeBet.address, bettor.address, payout.sub(betAmount));
+        await expect(tx)
+          .to.emit(freeBet, "BettorWin")
+          .withArgs(core.address, bettor.address, freeBetId, payout.sub(betAmount));
+        await expectTuple(await freeBet.freeBets(freeBetId), bettor.address, core.address, azuroBetId, 0, 0);
 
-      context("Cancel", () => {
-        async function cancel() {
-          await timeShiftBy(ethers, ONE_HOUR * 2);
-          await core.connect(oracle).cancelCondition(condId);
-        }
+        await expect(freeBet.connect(poolOwner).resolvePayout([freeBetId])).to.be.revertedWithCustomError(
+          freeBet,
+          "AlreadyResolved"
+        );
+        await expect(freeBet.connect(bettor).withdrawPayout(freeBetId)).to.not.be.reverted;
+      });
+      it("Should revert withdraw payout of not redeemed free bet", async () => {
+        await expect(freeBet.connect(bettor).withdrawPayout(0)).to.be.revertedWithCustomError(
+          freeBet,
+          "BetDoesNotExist"
+        );
+      });
+    });
+    context("Lose", () => {
+      async function lose() {
+        await timeShift(time + ONE_HOUR * 2);
+        await core.connect(oracle).resolveCondition(condId, [2]);
+      }
 
-        wrapLayer(cancel);
+      wrapLayer(lose);
 
-        it("Should reissue freeBet on resolve", async () => {
-          await expectTuple(
-            await freeBet.azuroBets(azurobetId),
-            core.address,
-            bettor1.address,
-            condId,
-            1,
-            newBet.amount,
-            0
-          );
-          await expectTuple(await freeBet.freeBets(1), 0, newBet.minOdds, newBet.durationTime);
-          expect(await freeBet.lockedReserve()).to.eq(0);
+      it("Should resolve 0 payout", async () => {
+        await expectTuple(await freeBet.freeBets(freeBetId), bettor.address, core.address, azuroBetId, betAmount, 0);
+        expect(await freeBet.lockedReserve()).to.be.equal(0);
 
-          const tx = freeBet.connect(bettor2).resolvePayout([azurobetId]);
+        await freeBet.connect(poolOwner).resolvePayout([freeBetId]);
+        expect(await freeBet.lockedReserve()).to.be.equal(0);
 
-          await expect(tx).to.emit(lp, "BettorWin").withArgs(core.address, freeBet.address, azurobetId, betAmount);
-          await expect(tx).to.emit(wxDAI, "Transfer").withArgs(lp.address, freeBet.address, betAmount);
-          await expect(tx)
-            .to.emit(freeBet, "FreeBetReissued")
-            .withArgs(bettor1.address, 1, [newBet.amount, newBet.minOdds, newBet.durationTime]);
+        await expectTuple(await freeBet.freeBets(freeBetId), bettor.address, core.address, azuroBetId, 0, 0);
 
-          await expectTuple(await freeBet.freeBets(1), newBet.amount, newBet.minOdds, newBet.durationTime);
-          await expectTuple(await freeBet.azuroBets(azurobetId), core.address, bettor1.address, condId, 1, 0, 0);
-          expect(await freeBet.expirationTime(1)).to.be.closeTo(
-            newBet.durationTime.add(await getBlockTime(ethers)),
-            1000
-          );
-          expect(await freeBet.lockedReserve()).to.eq(newBet.amount);
+        await expect(freeBet.connect(poolOwner).resolvePayout([freeBetId])).to.be.revertedWithCustomError(
+          freeBet,
+          "AlreadyResolved"
+        );
+      });
+      it("Should withdraw 0 payout", async () => {
+        await expectTuple(await freeBet.freeBets(freeBetId), bettor.address, core.address, azuroBetId, betAmount, 0);
+        expect(await freeBet.lockedReserve()).to.be.equal(0);
 
-          await expect(freeBet.connect(bettor2).resolvePayout([azurobetId])).to.be.revertedWithCustomError(
-            freeBet,
-            "AlreadyResolved"
-          );
-        });
+        const tx = await freeBet.connect(bettor).withdrawPayout(freeBetId);
+        expect(await freeBet.lockedReserve()).to.be.equal(0);
 
-        it("Should Withdraw payout after resolve", async () => {
-          await freeBet.connect(bettor2).resolvePayout([azurobetId]);
+        await expect(tx).to.emit(freeBet, "BettorWin");
+        await expectTuple(await freeBet.freeBets(freeBetId), bettor.address, core.address, azuroBetId, 0, 0);
 
-          await expectTuple(await freeBet.azuroBets(azurobetId), core.address, bettor1.address, condId, 1, 0, 0);
-          const tx = freeBet.connect(bettor1).withdrawPayout(azurobetId);
-          await expect(tx).to.not.emit(wxDAI, "Transfer");
-          await expect(tx).to.not.emit(freeBet, "BettorWin");
-          await expectTuple(await freeBet.azuroBets(azurobetId), core.address, bettor1.address, condId, 1, 0, 0);
+        await expect(freeBet.connect(poolOwner).resolvePayout([freeBetId])).to.be.revertedWithCustomError(
+          freeBet,
+          "AlreadyResolved"
+        );
+        await expect(freeBet.connect(bettor).withdrawPayout(freeBetId)).to.not.be.reverted;
+      });
+    });
+    context("Cancel", () => {
+      async function cancel() {
+        await timeShift(time + ONE_HOUR * 2);
+        await core.connect(oracle).cancelCondition(condId);
+      }
 
-          await expect(freeBet.connect(bettor2).resolvePayout([azurobetId])).to.be.revertedWithCustomError(
-            freeBet,
-            "AlreadyResolved"
-          );
-          await expect(freeBet.connect(bettor1).withdrawPayout(azurobetId)).to.not.be.reverted;
-        });
+      wrapLayer(cancel);
 
-        it("Should resolve and withdraw by calling withdraw", async () => {
-          await expectTuple(
-            await freeBet.azuroBets(azurobetId),
-            core.address,
-            bettor1.address,
-            condId,
-            1,
-            newBet.amount,
-            0
-          );
-          expect(await freeBet.lockedReserve()).to.eq(0);
+      it("Should Withdraw payout after resolve", async () => {
+        await freeBet.connect(poolOwner).resolvePayout([freeBetId]);
 
-          const tx = freeBet.connect(bettor1).withdrawPayout(azurobetId);
+        await expectTuple(await freeBet.freeBets(freeBetId), bettor.address, core.address, azuroBetId, 0, 0);
+        const tx = await freeBet.connect(bettor).withdrawPayout(freeBetId);
+        await expect(tx).to.not.emit(wxDAI, "Transfer");
+        await expect(tx).to.emit(freeBet, "BettorWin");
+        await expectTuple(await freeBet.freeBets(freeBetId), bettor.address, core.address, azuroBetId, 0, 0);
 
-          await expect(tx).to.emit(lp, "BettorWin").withArgs(core.address, freeBet.address, azurobetId, betAmount);
-          await expect(tx).to.emit(wxDAI, "Transfer").withArgs(lp.address, freeBet.address, betAmount);
-          await expect(tx)
-            .to.emit(freeBet, "FreeBetReissued")
-            .withArgs(bettor1.address, 1, [newBet.amount, newBet.minOdds, newBet.durationTime]);
-          await expect(tx).to.not.emit(freeBet, "BettorWin");
-          await expectTuple(await freeBet.azuroBets(azurobetId), core.address, bettor1.address, condId, 1, 0, 0);
-          expect(await freeBet.expirationTime(1)).to.be.closeTo(
-            newBet.durationTime.add(await getBlockTime(ethers)),
-            1000
-          );
-          expect(await freeBet.lockedReserve()).to.eq(newBet.amount);
+        await expect(freeBet.connect(poolOwner).resolvePayout([freeBetId])).to.be.revertedWithCustomError(
+          freeBet,
+          "AlreadyResolved"
+        );
+        await expect(freeBet.connect(bettor).withdrawPayout(freeBetId)).to.not.be.reverted;
+      });
+      it("Should resolve and withdraw by calling withdraw", async () => {
+        await expectTuple(await freeBet.freeBets(freeBetId), bettor.address, core.address, azuroBetId, betAmount, 0);
+        expect(await freeBet.lockedReserve()).to.eq(0);
 
-          await expect(freeBet.connect(bettor1).withdrawPayout(azurobetId)).to.not.be.reverted;
-          await expect(freeBet.connect(bettor2).resolvePayout([azurobetId])).to.be.revertedWithCustomError(
-            freeBet,
-            "AlreadyResolved"
-          );
-        });
+        const tx = await freeBet.connect(bettor).withdrawPayout(freeBetId);
+
+        await expect(tx).to.emit(lp, "BettorWin").withArgs(core.address, freeBet.address, azuroBetId, betAmount);
+        await expect(tx).to.emit(wxDAI, "Transfer").withArgs(lp.address, freeBet.address, betAmount);
+        await expect(tx).to.emit(freeBet, "BettorWin");
+        await expectTuple(await freeBet.freeBets(freeBetId), bettor.address, core.address, azuroBetId, 0, 0);
+        expect(await freeBet.lockedReserve()).to.eq(0);
+
+        await expect(freeBet.connect(bettor).withdrawPayout(freeBetId)).to.not.be.reverted;
+        await expect(freeBet.connect(poolOwner).resolvePayout([freeBetId])).to.be.revertedWithCustomError(
+          freeBet,
+          "AlreadyResolved"
+        );
       });
     });
   });

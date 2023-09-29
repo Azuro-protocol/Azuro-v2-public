@@ -37,7 +37,7 @@ async function main() {
   await bindRoles(access, deployer, [
     {
       target: freeBetFactory.address,
-      selector: "0x04209123",
+      selector: "0xe80568e3",
       roleId: roleId,
     },
   ]);
@@ -45,7 +45,7 @@ async function main() {
 
   const txCreateFreeBet = await freeBetFactory
     .connect(deployer)
-    .createFreeBet(LP_ADDRESS, "XYZFreeBet", "XFBET", FREEBET_AFFILIATE, FREEBET_MANAGER);
+    .createFreeBet(LP_ADDRESS, FREEBET_AFFILIATE, FREEBET_MANAGER);
   const receipt = await txCreateFreeBet.wait();
   const iface = new ethers.utils.Interface(
     freeBetFactory.interface.format(ethers.utils.FormatTypes.full).filter((x) => {

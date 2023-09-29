@@ -27,7 +27,7 @@ const createCondition = async (
 ) => {
   await safeOracle
     .connect(oracle)
-    .createCondition(core.address, gameId, condId, pools, outcomes, reinforcement, margin, 1, proposeDeadline);
+    .createCondition(core.address, gameId, condId, pools, outcomes, reinforcement, margin, 1, proposeDeadline, false);
 };
 
 const LIQUIDITY = tokens(200000);
@@ -50,6 +50,7 @@ describe("🛡️ SafeOracle test", function () {
   const minDepo = tokens(10);
   const daoFee = MULTIPLIER * 0.09; // 9%
   const dataProviderFee = MULTIPLIER * 0.01; // 1%
+  const affiliateFee = MULTIPLIER * 0.6; // 60%
 
   const pool1 = 5000000;
   const pool2 = 5000000;
@@ -66,7 +67,7 @@ describe("🛡️ SafeOracle test", function () {
   let condId = 0;
 
   before(async function () {
-    [dao, poolOwner, dataProvider, oracle, oracle2, maintainer, bettor, affiliate, disputer] =
+    [dao, poolOwner, dataProvider, affiliate, oracle, oracle2, maintainer, bettor, affiliate, disputer] =
       await ethers.getSigners();
 
     ({ factory, access, core, azuroBet, wxDAI, lp, roleIds } = await prepareStand(
@@ -74,10 +75,12 @@ describe("🛡️ SafeOracle test", function () {
       dao,
       poolOwner,
       dataProvider,
+      affiliate,
       bettor,
       minDepo,
       daoFee,
       dataProviderFee,
+      affiliateFee,
       LIQUIDITY
     ));
     await prepareAccess(access, poolOwner, oracle.address, oracle2.address, maintainer.address, roleIds);
@@ -124,7 +127,8 @@ describe("🛡️ SafeOracle test", function () {
         [OUTCOMEWIN, OUTCOMELOSE],
         REINFORCEMENT,
         MARGINALITY,
-        time + ONE_DAY
+        time + ONE_DAY,
+        false
       );
     });
     it("Oracle creates condition and fully pays for the insurance with ERC20 token", async () => {
@@ -161,7 +165,8 @@ describe("🛡️ SafeOracle test", function () {
         [OUTCOMEWIN, OUTCOMELOSE],
         REINFORCEMENT,
         MARGINALITY,
-        time + ONE_DAY
+        time + ONE_DAY,
+        false
       );
 
       expect(await wxDAI.balanceOf(oracle.address)).to.be.equal(balance.sub(INSURANCE));
@@ -195,7 +200,8 @@ describe("🛡️ SafeOracle test", function () {
         [OUTCOMEWIN, OUTCOMELOSE],
         REINFORCEMENT,
         MARGINALITY,
-        time + ONE_DAY
+        time + ONE_DAY,
+        false
       );
 
       expect(await wxDAI.balanceOf(oracle.address)).to.be.equal(balance.sub(INSURANCE));
@@ -216,7 +222,8 @@ describe("🛡️ SafeOracle test", function () {
         [OUTCOMEWIN, OUTCOMELOSE],
         REINFORCEMENT,
         MARGINALITY,
-        time + ONE_DAY
+        time + ONE_DAY,
+        false
       );
 
       expect(await wxDAI.balanceOf(oracle.address)).to.be.equal(balance.sub(insurance));
@@ -232,7 +239,8 @@ describe("🛡️ SafeOracle test", function () {
         [OUTCOMEWIN, OUTCOMELOSE],
         REINFORCEMENT,
         MARGINALITY,
-        time + ONE_DAY
+        time + ONE_DAY,
+        false
       );
 
       expect(await wxDAI.balanceOf(oracle.address)).to.be.equal(balance.sub(INSURANCE.mul(2)));
@@ -277,7 +285,8 @@ describe("🛡️ SafeOracle test", function () {
         [OUTCOMEWIN, OUTCOMELOSE],
         REINFORCEMENT,
         MARGINALITY,
-        time + ONE_DAY
+        time + ONE_DAY,
+        false
       );
 
       for (const _core of [core, core2]) {
@@ -472,7 +481,8 @@ describe("🛡️ SafeOracle test", function () {
         [OUTCOMEWIN, OUTCOMELOSE],
         REINFORCEMENT,
         MARGINALITY,
-        time + ONE_DAY
+        time + ONE_DAY,
+        false
       );
 
       await timeShift(time + ONE_HOUR + ONE_MINUTE);
@@ -596,7 +606,8 @@ describe("🛡️ SafeOracle test", function () {
             [OUTCOMEWIN, OUTCOMELOSE],
             REINFORCEMENT,
             MARGINALITY,
-            time + ONE_DAY
+            time + ONE_DAY,
+            false
           )
         ).to.be.revertedWithCustomError(access, "AccessNotGranted");
       });
@@ -612,7 +623,8 @@ describe("🛡️ SafeOracle test", function () {
             [OUTCOMEWIN, OUTCOMELOSE],
             REINFORCEMENT,
             MARGINALITY,
-            time - 1
+            time - 1,
+            false
           )
         ).to.be.revertedWithCustomError(safeOracle, "IncorrectProposeDeadline");
       });
@@ -629,7 +641,8 @@ describe("🛡️ SafeOracle test", function () {
             [OUTCOMEWIN, OUTCOMELOSE],
             REINFORCEMENT,
             MARGINALITY,
-            time + ONE_DAY
+            time + ONE_DAY,
+            false
           )
         ).to.be.revertedWith("TransferHelper::transferFrom: transferFrom failed");
       });
@@ -642,7 +655,7 @@ describe("🛡️ SafeOracle test", function () {
           unsafeAllowLinkedLibraries: true,
         });
 
-        await bindRoles(access, poolOwner, [{ target: core2.address, selector: "0xa08be625", roleId: roleIds.oracle }]);
+        await bindRoles(access, poolOwner, [{ target: core2.address, selector: "0x7c768a38", roleId: roleIds.oracle }]);
 
         await expect(
           createCondition(
@@ -655,7 +668,8 @@ describe("🛡️ SafeOracle test", function () {
             [OUTCOMEWIN, OUTCOMELOSE],
             REINFORCEMENT,
             MARGINALITY,
-            time + ONE_DAY
+            time + ONE_DAY,
+            false
           )
         ).to.be.revertedWithCustomError(lp, "UnknownCore");
       });
@@ -670,7 +684,8 @@ describe("🛡️ SafeOracle test", function () {
           [OUTCOMEWIN, OUTCOMELOSE],
           REINFORCEMENT,
           MARGINALITY,
-          time + ONE_DAY
+          time + ONE_DAY,
+          false
         );
         await expect(
           createCondition(
@@ -683,14 +698,24 @@ describe("🛡️ SafeOracle test", function () {
             [OUTCOMEWIN, OUTCOMELOSE],
             REINFORCEMENT,
             MARGINALITY,
-            time + ONE_DAY
+            time + ONE_DAY,
+            false
           )
         ).to.be.revertedWithCustomError(core, "ConditionAlreadyCreated");
       });
       it("Condition CAN NOT be created if it is already created directly through the core", async () => {
         await core
           .connect(oracle)
-          .createCondition(gameId, ++condId, [pool2, pool1], [OUTCOMEWIN, OUTCOMELOSE], REINFORCEMENT, MARGINALITY, 1);
+          .createCondition(
+            gameId,
+            ++condId,
+            [pool2, pool1],
+            [OUTCOMEWIN, OUTCOMELOSE],
+            REINFORCEMENT,
+            MARGINALITY,
+            1,
+            false
+          );
         await expect(
           createCondition(
             safeOracle,
@@ -702,7 +727,8 @@ describe("🛡️ SafeOracle test", function () {
             [OUTCOMEWIN, OUTCOMELOSE],
             REINFORCEMENT,
             MARGINALITY,
-            time + ONE_DAY
+            time + ONE_DAY,
+            false
           )
         ).to.be.revertedWithCustomError(safeOracle, "ConditionAlreadyCreated");
       });
@@ -719,7 +745,8 @@ describe("🛡️ SafeOracle test", function () {
           [OUTCOMEWIN, OUTCOMELOSE],
           REINFORCEMENT,
           MARGINALITY,
-          time + ONE_DAY
+          time + ONE_DAY,
+          false
         );
 
         await timeShift(time + ONE_HOUR + ONE_MINUTE);
@@ -824,7 +851,8 @@ describe("🛡️ SafeOracle test", function () {
           [OUTCOMEWIN, OUTCOMELOSE],
           REINFORCEMENT,
           MARGINALITY,
-          time + ONE_DAY
+          time + ONE_DAY,
+          false
         );
 
         await timeShift(time + ONE_HOUR + ONE_MINUTE);
@@ -853,7 +881,8 @@ describe("🛡️ SafeOracle test", function () {
           [OUTCOMEWIN, OUTCOMELOSE],
           REINFORCEMENT,
           MARGINALITY,
-          time + ONE_DAY
+          time + ONE_DAY,
+          false
         );
         await expect(safeOracle.connect(disputer).dispute(core.address, condId)).to.be.revertedWithCustomError(
           safeOracle,
@@ -903,7 +932,8 @@ describe("🛡️ SafeOracle test", function () {
           [OUTCOMEWIN, OUTCOMELOSE],
           REINFORCEMENT,
           MARGINALITY,
-          time + ONE_DAY
+          time + ONE_DAY,
+          false
         );
       });
       it("Condition solution CAN be approved only by the DAO", async () => {
@@ -1004,7 +1034,8 @@ describe("🛡️ SafeOracle test", function () {
           [OUTCOMEWIN, OUTCOMELOSE],
           REINFORCEMENT,
           MARGINALITY,
-          time + ONE_DAY
+          time + ONE_DAY,
+          false
         );
       });
       it("Condition CAN NOT be canceled if the DAO provided solution", async () => {
@@ -1071,7 +1102,8 @@ describe("🛡️ SafeOracle test", function () {
           [OUTCOMEWIN, OUTCOMELOSE],
           REINFORCEMENT,
           MARGINALITY,
-          time + ONE_DAY
+          time + ONE_DAY,
+          false
         );
       });
       it("Condition CAN NOT be processed as canceled if (!!!) it is not canceled", async () => {
@@ -1115,7 +1147,8 @@ describe("🛡️ SafeOracle test", function () {
           [OUTCOMEWIN, OUTCOMELOSE],
           REINFORCEMENT,
           MARGINALITY,
-          time + ONE_DAY
+          time + ONE_DAY,
+          false
         );
 
         await timeShift(time + ONE_HOUR + ONE_MINUTE);
@@ -1153,7 +1186,8 @@ describe("🛡️ SafeOracle test", function () {
           [OUTCOMEWIN, OUTCOMELOSE],
           REINFORCEMENT,
           MARGINALITY,
-          time + ONE_DAY
+          time + ONE_DAY,
+          false
         );
 
         await timeShift(time + ONE_HOUR + ONE_MINUTE);
@@ -1177,7 +1211,8 @@ describe("🛡️ SafeOracle test", function () {
           [OUTCOMEWIN, OUTCOMELOSE],
           REINFORCEMENT,
           MARGINALITY,
-          time + ONE_DAY
+          time + ONE_DAY,
+          false
         );
 
         await safeOracle.connect(dao).changeInsurance(tokens(123));

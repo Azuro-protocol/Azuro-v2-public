@@ -78,7 +78,7 @@ async function main() {
     { target: lp.address, selector: "0xa8822061", roleId: oracleRoleId }, // shiftGame
     { target: core.address, selector: "0xbc4925fc", roleId: oracleRoleId }, // cancelCondition
     { target: core.address, selector: "0x8ea8c308", roleId: oracleRoleId }, // changeOdds
-    { target: core.address, selector: "0xc6600c7c", roleId: oracleRoleId }, // createCondition
+    { target: core.address, selector: "0x7c768a38", roleId: oracleRoleId }, // createCondition
     { target: core.address, selector: "0xbc4925fc", roleId: maintainerRoleId }, // cancelCondition
     { target: core.address, selector: "0x6fea02f0", roleId: maintainerRoleId }, // stopCondition
     { target: core.address, selector: "0x8ea8c308", roleId: oddsManagerRoleId }, // changeOdds

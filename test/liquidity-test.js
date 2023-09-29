@@ -46,6 +46,7 @@ const marginality = MULTIPLIER * 0.05; // 5%
 const minDepo = tokens(10);
 const daoFee = MULTIPLIER * 0.09; // 9%
 const dataProviderFee = MULTIPLIER * 0.01; // 1%
+const affiliateFee = MULTIPLIER * 0.6; // 60%
 
 const approveAmount = tokens(999_999_999_999_999);
 const pool1 = 5000000;
@@ -54,8 +55,8 @@ const pool2 = 5000000;
 const DEPO_A = tokens(120_000);
 const DEPO_B = tokens(10_000);
 
-let dao, poolOwner, dataProvider, lpSupplier, lpSupplier2, lpOwner, oracle, oracle2, maintainer;
-let access, core, wxDAI, lp, azuroBet, lpnft;
+let dao, poolOwner, dataProvider, affiliate, lpSupplier, lpSupplier2, lpOwner, oracle, oracle2, maintainer;
+let access, core, wxDAI, lp;
 let roleIds, time, lpnft0;
 
 let gameId = 0;
@@ -69,6 +70,7 @@ describe("Liquidity test", function () {
       dao,
       poolOwner,
       dataProvider,
+      affiliate,
       lpOwner,
       lpSupplier,
       lpSupplier2,
@@ -87,10 +89,12 @@ describe("Liquidity test", function () {
       dao,
       poolOwner,
       dataProvider,
+      affiliate,
       lpSupplier,
       minDepo,
       daoFee,
-      dataProviderFee
+      dataProviderFee,
+      affiliateFee
     ));
     await prepareAccess(access, poolOwner, oracle.address, oracle2.address, maintainer.address, roleIds);
 
@@ -136,7 +140,8 @@ describe("Liquidity test", function () {
       [pool2, pool1],
       [OUTCOMEWIN, OUTCOMELOSE],
       deposit,
-      marginality
+      marginality,
+      false
     );
 
     // Place a large losing bet
@@ -151,7 +156,7 @@ describe("Liquidity test", function () {
     expect(await getWinthdrawnAmount(tx)).to.be.closeTo(
       deposit.add(
         betAmount
-          .mul(MULTIPLIER - (daoFee + dataProviderFee))
+          .mul(MULTIPLIER - (daoFee + dataProviderFee + affiliateFee))
           .div(MULTIPLIER)
           .mul(deposit)
           .div(lpReserve)
@@ -175,7 +180,8 @@ describe("Liquidity test", function () {
       [pool2, pool1],
       [OUTCOMEWIN, OUTCOMELOSE],
       deposit,
-      marginality
+      marginality,
+      false
     );
 
     // Place a large winning bet
@@ -203,7 +209,7 @@ describe("Liquidity test", function () {
           .mul(res.odds)
           .div(MULTIPLIER)
           .sub(betAmount)
-          .mul(MULTIPLIER - (daoFee + dataProviderFee))
+          .mul(MULTIPLIER - (daoFee + dataProviderFee + affiliateFee))
           .div(MULTIPLIER)
           .mul(deposit)
           .div(lpReserve)
@@ -235,7 +241,8 @@ describe("Liquidity test", function () {
       [pool2, pool1],
       [OUTCOMEWIN, OUTCOMELOSE],
       deposit,
-      marginality
+      marginality,
+      false
     );
 
     // Place a small losing bet
@@ -250,7 +257,7 @@ describe("Liquidity test", function () {
     expect(await getWinthdrawnAmount(tx)).to.be.closeTo(
       deposit.add(
         betAmount
-          .mul(MULTIPLIER - (daoFee + dataProviderFee))
+          .mul(MULTIPLIER - (daoFee + dataProviderFee + affiliateFee))
           .div(MULTIPLIER)
           .mul(deposit)
           .div(lpReserve)
@@ -275,7 +282,8 @@ describe("Liquidity test", function () {
       [pool2, pool1],
       [OUTCOMEWIN, OUTCOMELOSE],
       deposit,
-      marginality
+      marginality,
+      false
     );
 
     // Place a small winning bet
@@ -303,7 +311,7 @@ describe("Liquidity test", function () {
           .mul(res.odds)
           .div(MULTIPLIER)
           .sub(betAmount)
-          .mul(MULTIPLIER - (daoFee + dataProviderFee))
+          .mul(MULTIPLIER - (daoFee + dataProviderFee + affiliateFee))
           .div(MULTIPLIER)
           .mul(deposit)
           .div(lpReserve)
@@ -347,7 +355,8 @@ describe("Liquidity test", function () {
       [pool2, pool1],
       [OUTCOMEWIN, OUTCOMELOSE],
       lpReserve,
-      marginality
+      marginality,
+      false
     );
 
     // Place a losing bet
@@ -358,7 +367,7 @@ describe("Liquidity test", function () {
     await core.connect(oracle).resolveCondition(condId, [OUTCOMEWIN]);
 
     // Check LPs balances after the first condition
-    const profit = betAmount.mul(MULTIPLIER - (daoFee + dataProviderFee)).div(MULTIPLIER);
+    const profit = betAmount.mul(MULTIPLIER - (daoFee + dataProviderFee + affiliateFee)).div(MULTIPLIER);
     for (const deposit of deposits) {
       deposit.balance = deposit.balance.add(profit.mul(deposit.balance).div(lpReserve));
       expect(await lp.nodeWithdrawView(deposit.lpNFT)).to.be.closeTo(deposit.balance, 10);
@@ -390,7 +399,8 @@ describe("Liquidity test", function () {
       [pool2, pool1],
       [OUTCOMEWIN, OUTCOMELOSE],
       lpReserve,
-      marginality
+      marginality,
+      false
     );
 
     // Place a winning bet
@@ -415,7 +425,7 @@ describe("Liquidity test", function () {
       .mul(res.odds)
       .div(MULTIPLIER)
       .sub(betAmount)
-      .mul(MULTIPLIER - (daoFee + dataProviderFee))
+      .mul(MULTIPLIER - (daoFee + dataProviderFee + affiliateFee))
       .div(MULTIPLIER);
     for (const deposit of deposits) {
       let balance = deposit.balance;
@@ -453,7 +463,8 @@ describe("Liquidity test", function () {
       [pool2, pool1],
       [OUTCOMEWIN, OUTCOMELOSE],
       reinforcement,
-      marginality
+      marginality,
+      false
     );
 
     // Place a losing bet
@@ -502,7 +513,8 @@ describe("Liquidity test", function () {
       [pool2, pool1],
       [OUTCOMEWIN, OUTCOMELOSE],
       reinforcement,
-      marginality
+      marginality,
+      false
     );
 
     // Second LP adds liquidity >= the reinforcement amount for the condition
@@ -575,7 +587,8 @@ describe("Liquidity test", function () {
       [pool2, pool1],
       [OUTCOMEWIN, OUTCOMELOSE],
       deposit,
-      marginality
+      marginality,
+      false
     );
 
     // Place a small winning bet
@@ -644,7 +657,8 @@ describe("Liquidity test", function () {
         [pool2, pool1],
         [OUTCOMEWIN, OUTCOMELOSE],
         reinforcement,
-        marginality
+        marginality,
+        false
       );
 
       lpNFT2 = await addLiquidity(lp, lpSupplier2, SECOND_DEPO);
@@ -878,15 +892,18 @@ describe("Add liquidity before and after condition", () => {
       dao,
       poolOwner,
       dataProvider,
+      affiliate,
       USER_A,
       minDepo,
       daoFee,
-      dataProviderFee
+      dataProviderFee,
+      affiliateFee
     ));
     await prepareAccess(access, poolOwner, oracle.address, oracle2.address, maintainer.address, roleIds);
 
     await lp.connect(poolOwner).changeFee(0, 0); // DAO
     await lp.connect(poolOwner).changeFee(1, 0); // Oracle
+    await lp.connect(poolOwner).changeFee(2, 0); // Affiliate
     const lpBefore = await lp.getReserve();
     const lockedBefore = await lp.lockedLiquidity();
 
@@ -940,7 +957,8 @@ describe("Add liquidity before and after condition", () => {
           [pool2, pool1],
           [OUTCOMEWIN, OUTCOMELOSE],
           reinforcement,
-          marginality
+          marginality,
+          false
         );
         condIds.push(condId);
       }
@@ -1067,7 +1085,8 @@ describe("Add liquidity before and after condition", () => {
           [pool2, pool1],
           [OUTCOMEWIN, OUTCOMELOSE],
           reinforcement,
-          marginality
+          marginality,
+          false
         );
         condIds.push(condId);
       }

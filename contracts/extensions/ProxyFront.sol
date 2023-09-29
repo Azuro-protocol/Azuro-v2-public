@@ -24,10 +24,10 @@ contract ProxyFront is IProxyFront {
      * @notice To deposit the native currency, you need to send the deposit amount in {msg.value}.
      * @param  lp The address of the LP contract to use for withdrawal liquidity.
      */
-    function addLiquidityNative(address lp, bytes calldata data)
-        external
-        payable
-    {
+    function addLiquidityNative(
+        address lp,
+        bytes calldata data
+    ) external payable {
         ILP lp_ = ILP(lp);
         address token = lp_.token();
         IWNative(token).deposit{value: msg.value}();

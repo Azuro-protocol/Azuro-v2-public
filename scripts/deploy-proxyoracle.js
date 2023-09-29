@@ -58,7 +58,7 @@ async function main() {
 
   const rolesData = [
     { target: proxyOracle.address, selector: "0xd58cf784", roleId: createRoleId }, // createGames
-    { target: proxyOracle.address, selector: "0x490e18f8", roleId: createRoleId }, // createConditions
+    { target: proxyOracle.address, selector: "0x32823bc8", roleId: createRoleId }, // createConditions
     { target: proxyOracle.address, selector: "0xd9d0f338", roleId: resolveRoleId }, // resolveCondition
     { target: proxyOracle.address, selector: "0xf3897bfd", roleId: cancelRoleId }, // cancelGames
     { target: proxyOracle.address, selector: "0x829b9682", roleId: cancelRoleId }, // cancelConditions

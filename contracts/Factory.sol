@@ -43,11 +43,10 @@ contract Factory is OwnableUpgradeable {
     error UnknownCoreType();
     error UnknownLP();
 
-    function initialize(address accessBeacon_, address lpBeacon_)
-        external
-        virtual
-        initializer
-    {
+    function initialize(
+        address accessBeacon_,
+        address lpBeacon_
+    ) external virtual initializer {
         __Ownable_init();
         accessBeacon = accessBeacon_;
         lpBeacon = lpBeacon_;
@@ -75,6 +74,7 @@ contract Factory is OwnableUpgradeable {
      * @param  minDepo minimum liquidity deposit
      * @param  daoFee share of the profits due to the DAO
      * @param  dataProviderFee share of the profits due to Data Provider
+     * @param  affiliateFee share of the profits due to Affiliates
      * @param  coreType name of the Core type to plug in first
      */
     function createPool(
@@ -82,6 +82,7 @@ contract Factory is OwnableUpgradeable {
         uint128 minDepo,
         uint64 daoFee,
         uint64 dataProviderFee,
+        uint64 affiliateFee,
         string calldata coreType
     ) external {
         address accessAddress = address(new BeaconProxy(accessBeacon, ""));
@@ -94,10 +95,12 @@ contract Factory is OwnableUpgradeable {
         lp.initialize(
             accessAddress,
             msg.sender,
+            msg.sender,
             token,
             minDepo,
             daoFee,
-            dataProviderFee
+            dataProviderFee,
+            affiliateFee
         );
         lp.transferOwnership(msg.sender);
         registeredLPs[lpAddress] = true;
@@ -160,10 +163,10 @@ contract Factory is OwnableUpgradeable {
      * @param  coreType Core type name
      * @return coreAddress address of new plugged core
      */
-    function _plugCore(address lp, string calldata coreType)
-        internal
-        returns (address coreAddress)
-    {
+    function _plugCore(
+        address lp,
+        string calldata coreType
+    ) internal returns (address coreAddress) {
         CoreBeacons memory beacons = _getBeacons(coreType);
         coreAddress = address(new BeaconProxy(beacons.core, ""));
         ICoreBase core = ICoreBase(coreAddress);
@@ -185,11 +188,9 @@ contract Factory is OwnableUpgradeable {
     /**
      * @notice Get beacons for Core `coreType`.
      */
-    function _getBeacons(string calldata coreType)
-        internal
-        view
-        returns (CoreBeacons storage beacons)
-    {
+    function _getBeacons(
+        string calldata coreType
+    ) internal view returns (CoreBeacons storage beacons) {
         beacons = coreBeacons[coreType];
         if (beacons.core == address(0)) revert UnknownCoreType();
     }

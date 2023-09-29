@@ -23,5 +23,6 @@ interface ICondition {
         uint8 winningOutcomesCount;
         ConditionState state;
         address oracle;
+        bool isExpressForbidden;
     }
 }

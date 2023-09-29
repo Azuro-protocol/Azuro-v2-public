@@ -37,7 +37,9 @@ contract AzuroBet is OwnableUpgradeable, ERC721Upgradeable, IAzuroBet {
     /**
      * @notice See {IERC165-supportsInterface}.
      */
-    function supportsInterface(bytes4 interfaceId)
+    function supportsInterface(
+        bytes4 interfaceId
+    )
         public
         view
         override(IERC165Upgradeable, ERC721Upgradeable)
@@ -66,12 +68,9 @@ contract AzuroBet is OwnableUpgradeable, ERC721Upgradeable, IAzuroBet {
      * @notice Core: See {ERC721Upgradeable-_mint}.
      * @return tokenId minted token id
      */
-    function mint(address account)
-        external
-        override
-        onlyCore
-        returns (uint256 tokenId)
-    {
+    function mint(
+        address account
+    ) external override onlyCore returns (uint256 tokenId) {
         tokenId = ++lastTokenId;
         super._mint(account, tokenId);
     }
@@ -79,11 +78,9 @@ contract AzuroBet is OwnableUpgradeable, ERC721Upgradeable, IAzuroBet {
     /**
      * @notice Get all IDs of tokens owned by `owner_`.
      */
-    function getTokensByOwner(address owner_)
-        external
-        view
-        returns (uint256[] memory tokenIds)
-    {
+    function getTokensByOwner(
+        address owner_
+    ) external view returns (uint256[] memory tokenIds) {
         return getTokensByOwner(owner_, 0, balanceOf(owner_));
     }
 
@@ -91,12 +88,9 @@ contract AzuroBet is OwnableUpgradeable, ERC721Upgradeable, IAzuroBet {
      * @notice See {IERC721EnumerableUpgradeable-tokenByIndex}.
      * @notice The function included only to support ERC721EnumerableUpgradeable interface.
      */
-    function tokenByIndex(uint256 index)
-        external
-        view
-        override
-        returns (uint256)
-    {
+    function tokenByIndex(
+        uint256 index
+    ) external view override returns (uint256) {
         require(index < lastTokenId, "ERC721: global index out of bounds");
         return index + 1;
     }
@@ -104,12 +98,10 @@ contract AzuroBet is OwnableUpgradeable, ERC721Upgradeable, IAzuroBet {
     /**
      * @notice See {IERC721EnumerableUpgradeable-tokenOfOwnerByIndex}.
      */
-    function tokenOfOwnerByIndex(address owner_, uint256 index)
-        external
-        view
-        override
-        returns (uint256)
-    {
+    function tokenOfOwnerByIndex(
+        address owner_,
+        uint256 index
+    ) external view override returns (uint256) {
         require(index < balanceOf(owner_), "ERC721: owner index out of bounds");
         return _ownedTokens[owner_][index];
     }
@@ -181,9 +173,10 @@ contract AzuroBet is OwnableUpgradeable, ERC721Upgradeable, IAzuroBet {
      * @param  from address representing the previous owner of the given token ID
      * @param  tokenId ID of the token to be removed from the tokens list of the given address
      */
-    function _removeTokenFromOwnerEnumeration(address from, uint256 tokenId)
-        internal
-    {
+    function _removeTokenFromOwnerEnumeration(
+        address from,
+        uint256 tokenId
+    ) internal {
         uint256 lastTokenIndex = balanceOf(from) - 1;
         uint256 tokenIndex = _ownedTokensIndex[tokenId];
 

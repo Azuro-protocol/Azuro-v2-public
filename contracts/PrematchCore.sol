@@ -22,7 +22,8 @@ contract PrematchCore is CoreBase, IPrematchCore {
         uint64[] calldata outcomes,
         uint128 reinforcement,
         uint64 margin,
-        uint8 winningOutcomesCount
+        uint8 winningOutcomesCount,
+        bool isExpressForbidden
     ) external override restricted(this.createCondition.selector) {
         _createCondition(
             gameId,
@@ -31,7 +32,8 @@ contract PrematchCore is CoreBase, IPrematchCore {
             outcomes,
             reinforcement,
             margin,
-            winningOutcomesCount
+            winningOutcomesCount,
+            isExpressForbidden
         );
         if (lp.addCondition(gameId) <= block.timestamp)
             revert GameAlreadyStarted();
@@ -119,57 +121,5 @@ contract PrematchCore is CoreBase, IPrematchCore {
     function resolveCondition(
         uint256 conditionId,
         uint64[] calldata winningOutcomes_
-    ) external override {
-        Condition storage condition = _getCondition(conditionId);
-        if (winningOutcomes_.length != condition.winningOutcomesCount)
-            revert IncorrectWinningOutcomesCount();
-
-        address oracle = condition.oracle;
-        if (msg.sender != oracle) revert OnlyOracle(oracle);
-        {
-            (uint64 timeOut, bool gameIsCanceled) = lp.getGameInfo(
-                condition.gameId
-            );
-            if (
-                /// TODO: Use only `_isConditionCanceled` to check if condition or its game is canceled
-                gameIsCanceled ||
-                condition.state == ConditionState.CANCELED ||
-                _isConditionResolved(condition)
-            ) revert ConditionAlreadyResolved();
-
-            timeOut += 1 minutes;
-            if (block.timestamp < timeOut) revert ResolveTooEarly(timeOut);
-        }
-
-        uint128 payout;
-        for (uint256 i = 0; i < winningOutcomes_.length; ++i) {
-            payout += condition.payouts[
-                getOutcomeIndex(conditionId, winningOutcomes_[i])
-            ];
-        }
-        _resolveCondition(
-            condition,
-            conditionId,
-            ConditionState.RESOLVED,
-            winningOutcomes_,
-            payout
-        );
-    }
-
-    /**
-     * @notice Liquidity Pool: Resolve AzuroBet token `tokenId` payout.
-     * @param  tokenId AzuroBet token ID
-     * @return winning account
-     * @return amount of winnings
-     */
-    function resolvePayout(uint256 tokenId)
-        external
-        override
-        onlyLp
-        returns (address, uint128)
-    {
-        uint128 payout = viewPayout(tokenId);
-        bets[tokenId].isPaid = true;
-        return (azuroBet.ownerOf(tokenId), payout);
-    }
+    ) external override resolveConditionBase(conditionId, winningOutcomes_) {}
 }

@@ -34,6 +34,7 @@ describe("Extension test", function () {
   const minDepo = tokens(10);
   const daoFee = MULTIPLIER * 0.09; // 9%
   const dataProviderFee = MULTIPLIER * 0.01; // 1%
+  const affiliateFee = MULTIPLIER * 0.6; // 60%
 
   let gameId = 0,
     condId = 0;
@@ -51,10 +52,12 @@ describe("Extension test", function () {
       dao,
       poolOwner,
       dataProvider,
+      affiliate,
       bettor,
       minDepo,
       daoFee,
       dataProviderFee,
+      affiliateFee,
       LIQUIDITY
     ));
     await prepareAccess(access, poolOwner, oracle.address, oracle2.address, maintainer.address, roleIds);
@@ -77,7 +80,8 @@ describe("Extension test", function () {
       [pool2, pool1],
       [OUTCOMEWIN, OUTCOMELOSE],
       reinforcement,
-      marginality
+      marginality,
+      false
     );
 
     let approveAmount = tokens("9999999");
@@ -175,7 +179,8 @@ describe("Extension test", function () {
       [pool2, pool1],
       [OUTCOMEWIN, OUTCOMELOSE],
       reinforcement,
-      marginality
+      marginality,
+      false
     );
 
     let approveAmount = tokens("9999999");

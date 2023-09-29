@@ -30,10 +30,10 @@ contract Staking is OwnableUpgradeable, IStaking {
      * @param  token_ The address of the token being staked.
      * @param  interestRate_ The interest rate for staking.
      */
-    function initialize(address token_, uint64 interestRate_)
-        external
-        initializer
-    {
+    function initialize(
+        address token_,
+        uint64 interestRate_
+    ) external initializer {
         __Ownable_init();
         token = token_;
         interestRate = interestRate_;
@@ -111,6 +111,7 @@ contract StakingConnector is
     IStakingConnector
 {
     using ECDSA for bytes32;
+    using FixedMath for *;
 
     mapping(uint48 => Deposit) public deposits;
     mapping(address => uint256) public deposited;
@@ -118,6 +119,7 @@ contract StakingConnector is
 
     address public lp;
     address public oracle;
+    uint64 public depositRate;
 
     /**
      * @notice Throws an error if the caller is not the Liquidity Provider.
@@ -131,11 +133,27 @@ contract StakingConnector is
      * @notice Initializes the StakingConnector contract.
      * @param lp_ The address of the Liquidity Provider.
      * @param oracle_ The address of the oracle responsible for approving liquidity deposits.
+     * @param depositRate_ The rate at which liquidity can be added to the pool, relative to the staked amount.
      */
-    function initialize(address lp_, address oracle_) external initializer {
+    function initialize(
+        address lp_,
+        address oracle_,
+        uint64 depositRate_
+    ) external initializer {
         __Ownable_init();
         lp = lp_;
         oracle = oracle_;
+        depositRate = depositRate_;
+    }
+
+    /**
+     * @notice Owner: Sets the new deposit rate for liquidity providing.
+     * @param  newDepositRate The new deposit rate where `FixedMath.ONE` implies that for one staked token, one token
+     *         can be deposited into the Liquidity Pool.
+     */
+    function changeDepositRate(uint64 newDepositRate) external onlyOwner {
+        depositRate = newDepositRate;
+        emit DepositRateChanged(newDepositRate);
     }
 
     /**
@@ -154,10 +172,10 @@ contract StakingConnector is
      * @param depositId The ID of the deposit associated with the liquidity withdrawal.
      * @param balance The new balance of the deposit after the withdrawal.
      */
-    function afterWithdrawLiquidity(uint48 depositId, uint128 balance)
-        external
-        onlyLp
-    {
+    function afterWithdrawLiquidity(
+        uint48 depositId,
+        uint128 balance
+    ) external onlyLp {
         Deposit storage deposit = deposits[depositId];
         address owner = deposit.owner;
         if (owner == address(0)) return;
@@ -188,7 +206,7 @@ contract StakingConnector is
         (OracleResponse memory oracleResponse, bytes memory signature) = abi
             .decode(data, (OracleResponse, bytes));
 
-        _verifySignature(account, oracleResponse, signature);
+        _verifySignature(oracleResponse, signature);
 
         if (
             oracleResponse.account != account ||
@@ -200,7 +218,7 @@ contract StakingConnector is
         if (oracleResponse.nonce != nonce) revert InvalidNonce();
 
         deposited[account] += balance;
-        if (oracleResponse.depositLimit < deposited[account])
+        if (oracleResponse.stakedAmount.mul(depositRate) < deposited[account])
             revert InsufficientDepositLimit();
 
         deposits[depositId] = Deposit(account, balance, balance);
@@ -208,12 +226,10 @@ contract StakingConnector is
 
     /**
      * @notice Verifies the signature of the oracle response.
-     * @param account The address of the liquidity provider.
      * @param oracleResponse The oracle response to be verified.
      * @param signature The signature to be validated.
      */
     function _verifySignature(
-        address account,
         OracleResponse memory oracleResponse,
         bytes memory signature
     ) internal view {

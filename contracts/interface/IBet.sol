@@ -24,9 +24,9 @@ interface IBet {
         BetData calldata betData
     ) external returns (uint256 tokenId);
 
-    function resolvePayout(uint256 tokenId)
-        external
-        returns (address account, uint128 payout);
+    function resolvePayout(
+        uint256 tokenId
+    ) external returns (address account, uint128 payout);
 
     function viewPayout(uint256 tokenId) external view returns (uint128 payout);
 }

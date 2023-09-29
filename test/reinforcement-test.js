@@ -29,6 +29,7 @@ describe("Reinforcement test", function () {
   const minDepo = tokens(10);
   const daoFee = MULTIPLIER * 0.09; // 9%
   const dataProviderFee = MULTIPLIER * 0.01; // 1%
+  const affiliateFee = MULTIPLIER * 0.6; // 60%
 
   const pool1 = 5000000;
   const pool2 = 5000000;
@@ -47,10 +48,12 @@ describe("Reinforcement test", function () {
       dao,
       poolOwner,
       dataProvider,
+      affiliate,
       bettor,
       minDepo,
       daoFee,
       dataProviderFee,
+      affiliateFee,
       LIQUIDITY
     ));
     await prepareAccess(access, poolOwner, oracle.address, oracle2.address, maintainer.address, roleIds);
@@ -71,7 +74,8 @@ describe("Reinforcement test", function () {
       [pool2, pool1],
       [OUTCOMEWIN, OUTCOMELOSE],
       reinforcement,
-      marginality
+      marginality,
+      false
     );
 
     await createCondition(
@@ -82,7 +86,8 @@ describe("Reinforcement test", function () {
       [pool2, pool1],
       [OUTCOMEWIN, OUTCOMELOSE],
       reinforcement,
-      marginality
+      marginality,
+      false
     );
 
     const fundShare = reinforcement.div(2);
@@ -141,7 +146,8 @@ describe("Reinforcement test", function () {
       [150000, 300000],
       [OUTCOMEWIN, OUTCOMELOSE],
       reinforcement,
-      marginality
+      marginality,
+      false
     );
 
     expect(await lp.lockedLiquidity()).to.equal(lockedBefore);
@@ -202,7 +208,8 @@ describe("Reinforcement test", function () {
       [91000, 909000],
       [OUTCOMEWIN, OUTCOMELOSE],
       reinforcement,
-      marginality
+      marginality,
+      false
     );
 
     const betAmount4 = tokens(20);
@@ -253,7 +260,8 @@ describe("Reinforcement test", function () {
         [pool2, pool1],
         [OUTCOMEWIN, OUTCOMELOSE],
         reinforcement,
-        marginality
+        marginality,
+        false
       );
     }
 
@@ -268,7 +276,8 @@ describe("Reinforcement test", function () {
       [pool2, pool1],
       [OUTCOMEWIN, OUTCOMELOSE],
       reinforcement,
-      marginality
+      marginality,
+      false
     );
 
     // Total bet amount is greater than liquidity pool x 25
@@ -306,7 +315,8 @@ describe("Reinforcement test", function () {
       [pool2, pool1],
       [OUTCOMEWIN, OUTCOMELOSE],
       lpBefore.div(2), // Max outcome reinforcement = available liquidity * 0.25
-      marginality
+      marginality,
+      false
     );
 
     await makeBetGetTokenId(lp, core, bettor, affiliate.address, condId1, tokens(10000), [OUTCOMEWIN], time + 100, 0);
@@ -328,7 +338,8 @@ describe("Reinforcement test", function () {
       [pool2, pool1],
       [OUTCOMEWIN, OUTCOMELOSE],
       reinforcement,
-      marginality
+      marginality,
+      false
     );
 
     await expect(
@@ -352,7 +363,8 @@ describe("Reinforcement test", function () {
       [pool2, pool1],
       [OUTCOMEWIN, OUTCOMELOSE],
       reinforcement,
-      marginality
+      marginality,
+      false
     );
     expect(await lp.lockedLiquidity()).to.be.equal(lpBefore);
 
@@ -387,7 +399,8 @@ describe("Reinforcement test", function () {
       [pool2, pool1],
       [OUTCOMEWIN, OUTCOMELOSE],
       reinforcement,
-      marginality
+      marginality,
+      false
     );
     const condId2 = ++condId;
     await createCondition(
@@ -398,7 +411,8 @@ describe("Reinforcement test", function () {
       [pool2, pool1],
       [OUTCOMEWIN, OUTCOMELOSE],
       reinforcement,
-      marginality
+      marginality,
+      false
     );
     expect(await lp.lockedLiquidity()).to.be.equal(lpBefore);
 

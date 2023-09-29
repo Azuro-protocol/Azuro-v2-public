@@ -21,6 +21,7 @@ const LIQUIDITY = tokens(200000);
 const MIN_DEPO = tokens(10);
 const DAO_FEE = MULTIPLIER * 0.09; // 9%
 const DATA_PROVIDER_FEE = MULTIPLIER * 0.01; // 1%
+const AFFILIATE_FEE = MULTIPLIER * 0.6; // 60%
 const REINFORCEMENT = tokens(20000);
 const MARGINALITY = MULTIPLIER * 0.05; // 5%
 
@@ -55,8 +56,9 @@ const testEngine = async (
     const time = await getBlockTime(ethers);
     const lockedBefore = await lp.lockedLiquidity();
 
-    const dataProviderReward = (await lp.rewards(dataProvider.address)).amount;
     const daoReward = (await lp.rewards(dao.address)).amount;
+    const dataProviderReward = (await lp.rewards(dataProvider.address)).amount;
+    const affiliateReward = (await lp.rewards(affiliate.address)).amount;
 
     await createGame(lp, oracle, ++gameId, time + ONE_DAY);
     await createCondition(
@@ -67,7 +69,8 @@ const testEngine = async (
       Array(outcomesCount).fill(50_000),
       outcomes,
       REINFORCEMENT,
-      MARGINALITY
+      MARGINALITY,
+      false
     );
 
     const payouts = Array(outcomesCount).fill(BigNumber.from(0));
@@ -186,11 +189,14 @@ const testEngine = async (
 
     const outcomeWinPayout = payouts[outcomeWin];
     // Checking data provider and dao reward changing
+    expect((await lp.rewards(dao.address)).amount).to.be.equal(
+      daoReward.add(totalNetBets.sub(outcomeWinPayout).mul(DAO_FEE).div(MULTIPLIER))
+    );
     expect((await lp.rewards(dataProvider.address)).amount).to.be.equal(
       dataProviderReward.add(totalNetBets.sub(outcomeWinPayout).mul(DATA_PROVIDER_FEE).div(MULTIPLIER))
     );
-    expect((await lp.rewards(dao.address)).amount).to.be.equal(
-      daoReward.add(totalNetBets.sub(outcomeWinPayout).mul(DAO_FEE).div(MULTIPLIER))
+    expect((await lp.rewards(affiliate.address)).amount).to.be.equal(
+      affiliateReward.add(totalNetBets.sub(outcomeWinPayout).mul(AFFILIATE_FEE).div(MULTIPLIER))
     );
 
     for (const bet of losingBets) {
@@ -210,23 +216,24 @@ const testEngine = async (
 };
 
 context("Multi-outcome test", function () {
-  let dao, poolOwner, dataProvider, oracle, oracle2, maintainer, affiliate, bettor, disputer;
+  let dao, poolOwner, dataProvider, oracle, oracle2, maintainer, affiliate, bettor;
   let factory, access, core, azuroBet, wxDAI, lp, coreTools;
   let roleIds, time;
 
   before(async function () {
-    [dao, poolOwner, dataProvider, oracle, oracle2, maintainer, bettor, affiliate, disputer] =
-      await ethers.getSigners();
+    [dao, poolOwner, dataProvider, oracle, oracle2, maintainer, bettor, affiliate] = await ethers.getSigners();
 
     ({ factory, access, core, azuroBet, wxDAI, lp, roleIds } = await prepareStand(
       ethers,
       dao,
       poolOwner,
       dataProvider,
+      affiliate,
       bettor,
       MIN_DEPO,
       DAO_FEE,
       DATA_PROVIDER_FEE,
+      AFFILIATE_FEE,
       LIQUIDITY
     ));
 
@@ -252,7 +259,8 @@ context("Multi-outcome test", function () {
           Array(outcomesCount).fill(50_000),
           outcomes,
           REINFORCEMENT,
-          0
+          0,
+          false
         );
 
         const condition = await core.getCondition(condId);
@@ -280,7 +288,7 @@ context("Multi-outcome test", function () {
           oddsNormalizer = oddsNormalizer.add(BigNumber.from(MULTIPLIER).mul(MULTIPLIER).div(initialOdds[i]));
         }
 
-        await createCondition(core, oracle, gameId, ++condId, initialOdds, outcomes, REINFORCEMENT, 0);
+        await createCondition(core, oracle, gameId, ++condId, initialOdds, outcomes, REINFORCEMENT, 0, false);
 
         const condition = await core.getCondition(condId);
         let newVirtualFund = BigNumber.from(0);
@@ -300,7 +308,7 @@ context("Multi-outcome test", function () {
       const outcomesCount = 3;
       const initialOdds = [200, 300, 600]; // [50%, 33%, 16%]
 
-      await createCondition(core, oracle, gameId, ++condId, initialOdds, [0, 1, 2], REINFORCEMENT, 0);
+      await createCondition(core, oracle, gameId, ++condId, initialOdds, [0, 1, 2], REINFORCEMENT, 0, false);
 
       const condition = await core.getCondition(condId);
       let newVirtualFund = BigNumber.from(0);
@@ -327,7 +335,8 @@ context("Multi-outcome test", function () {
           Array(outcomesCount).fill(50_000),
           outcomes,
           REINFORCEMENT,
-          0
+          0,
+          false
         );
 
         await makeBetGetTokenIdOdds(
@@ -381,7 +390,8 @@ context("Multi-outcome test", function () {
           Array(outcomesCount).fill(50_000),
           outcomes,
           REINFORCEMENT,
-          0
+          0,
+          false
         );
 
         const { odds } = await makeBetGetTokenIdOdds(
@@ -556,10 +566,10 @@ context("Multi-outcome test", function () {
     });
     it("Condition MUST contain at least two outcomes", async () => {
       await expect(
-        createCondition(core, oracle, gameId, ++condId, [50000], [OUTCOMEWIN], REINFORCEMENT, MARGINALITY)
+        createCondition(core, oracle, gameId, ++condId, [50000], [OUTCOMEWIN], REINFORCEMENT, MARGINALITY, false)
       ).to.be.revertedWithCustomError(core, "IncorrectOutcomesCount");
       await expect(
-        createCondition(core, oracle, gameId, ++condId, [], [], REINFORCEMENT, MARGINALITY)
+        createCondition(core, oracle, gameId, ++condId, [], [], REINFORCEMENT, MARGINALITY, false)
       ).to.be.revertedWithCustomError(core, "IncorrectOutcomesCount");
     });
     it("The number of condition outcomes MUST NOT break the limit", async () => {
@@ -572,7 +582,8 @@ context("Multi-outcome test", function () {
         Array(maxOutcomesCount).fill(50_000),
         [...Array(maxOutcomesCount).keys()],
         REINFORCEMENT,
-        MARGINALITY
+        MARGINALITY,
+        false
       );
       await expect(
         createCondition(
@@ -583,7 +594,8 @@ context("Multi-outcome test", function () {
           Array(maxOutcomesCount + 1).fill(50_000),
           [...Array(maxOutcomesCount + 1).keys()],
           REINFORCEMENT,
-          MARGINALITY
+          MARGINALITY,
+          false
         )
       ).to.be.revertedWithCustomError(core, "IncorrectOutcomesCount");
     });
@@ -597,7 +609,8 @@ context("Multi-outcome test", function () {
           [50000, 50000, 50000],
           [OUTCOMEWIN, OUTCOMESLOSE[0]],
           REINFORCEMENT,
-          MARGINALITY
+          MARGINALITY,
+          false
         )
       ).to.be.revertedWithCustomError(core, "OutcomesAndOddsCountDiffer");
       await expect(
@@ -609,7 +622,8 @@ context("Multi-outcome test", function () {
           [50000],
           [OUTCOMEWIN, OUTCOMESLOSE[0]],
           REINFORCEMENT,
-          MARGINALITY
+          MARGINALITY,
+          false
         )
       ).to.be.revertedWithCustomError(core, "OutcomesAndOddsCountDiffer");
 
@@ -621,7 +635,8 @@ context("Multi-outcome test", function () {
         [50000, 50000],
         [OUTCOMEWIN, OUTCOMESLOSE[0]],
         REINFORCEMENT,
-        MARGINALITY
+        MARGINALITY,
+        false
       );
       await expect(core.connect(oracle).changeOdds(condId, [50000, 50000, 50000])).to.be.revertedWithCustomError(
         core,
@@ -642,7 +657,8 @@ context("Multi-outcome test", function () {
           [50000, 50000, 0],
           [OUTCOMEWIN, OUTCOMESLOSE[0], OUTCOMESLOSE[1]],
           REINFORCEMENT,
-          MARGINALITY
+          MARGINALITY,
+          false
         )
       ).to.be.revertedWithCustomError(core, "ZeroOdds");
 
@@ -654,7 +670,8 @@ context("Multi-outcome test", function () {
         [50000, 50000, 50000],
         [OUTCOMEWIN, OUTCOMESLOSE[0], OUTCOMESLOSE[1]],
         REINFORCEMENT,
-        MARGINALITY
+        MARGINALITY,
+        false
       );
       await expect(core.connect(oracle).changeOdds(condId, [50000, 50000, 0])).to.be.revertedWithCustomError(
         core,
@@ -667,6 +684,7 @@ context("Multi-outcome test", function () {
     before(async function () {
       await lp.connect(poolOwner).changeFee(0, 0);
       await lp.connect(poolOwner).changeFee(1, 0);
+      await lp.connect(poolOwner).changeFee(2, 0);
     });
     beforeEach(async function () {
       time = await getBlockTime(ethers);
@@ -682,7 +700,8 @@ context("Multi-outcome test", function () {
           [OUTCOMEWIN, OUTCOMESLOSE[0], OUTCOMESLOSE[1]],
           REINFORCEMENT,
           0,
-          2
+          2,
+          false
         );
 
       const betAmount = tokens(100);
@@ -753,7 +772,8 @@ context("Multi-outcome test", function () {
           [OUTCOMEWIN, OUTCOMESLOSE[0], OUTCOMESLOSE[1]],
           REINFORCEMENT,
           0,
-          1
+          1,
+          false
         );
 
       const odds = await core.calcOdds(condId, 0, OUTCOMEWIN);
@@ -766,7 +786,8 @@ context("Multi-outcome test", function () {
           [OUTCOMEWIN, OUTCOMESLOSE[0], OUTCOMESLOSE[1]],
           REINFORCEMENT,
           0,
-          2
+          2,
+          false
         );
       expect(await core.calcOdds(condId, 0, OUTCOMEWIN)).to.be.equal(odds.div(2));
     });
@@ -782,7 +803,8 @@ context("Multi-outcome test", function () {
           [OUTCOMEWIN, OUTCOMESLOSE[0], OUTCOMESLOSE[1]],
           REINFORCEMENT,
           0,
-          2
+          2,
+          false
         );
 
       const betAmount = tokens(100);
@@ -830,7 +852,8 @@ context("Multi-outcome test", function () {
           [OUTCOMEWIN, OUTCOMESLOSE[0], OUTCOMESLOSE[1]],
           REINFORCEMENT,
           0,
-          2
+          2,
+          false
         );
 
       const betAmount = tokens(100);
@@ -879,7 +902,8 @@ context("Multi-outcome test", function () {
           [OUTCOMEWIN, OUTCOMESLOSE[0], OUTCOMESLOSE[1]],
           REINFORCEMENT,
           0,
-          2
+          2,
+          false
         );
 
       const betAmount1 = tokens(200);
@@ -971,7 +995,8 @@ context("Multi-outcome test", function () {
           [OUTCOMEWIN, OUTCOMESLOSE[0], OUTCOMESLOSE[1]],
           REINFORCEMENT,
           MARGINALITY,
-          2
+          2,
+          false
         );
 
       const betAmount = tokens(100);
@@ -1037,7 +1062,8 @@ context("Multi-outcome test", function () {
           [OUTCOMEWIN, OUTCOMESLOSE[0], OUTCOMESLOSE[1]],
           REINFORCEMENT,
           0,
-          2
+          2,
+          false
         );
 
       const betAmount1 = tokens(200);
@@ -1146,7 +1172,8 @@ context("Multi-outcome test", function () {
               [OUTCOMEWIN, OUTCOMESLOSE[0], OUTCOMESLOSE[1]],
               REINFORCEMENT,
               MARGINALITY,
-              4
+              4,
+              false
             )
         ).to.be.revertedWithCustomError(core, "IncorrectWinningOutcomesCount");
         await expect(
@@ -1159,7 +1186,8 @@ context("Multi-outcome test", function () {
               [OUTCOMEWIN, OUTCOMESLOSE[0], OUTCOMESLOSE[1]],
               REINFORCEMENT,
               MARGINALITY,
-              3
+              3,
+              false
             )
         ).to.be.revertedWithCustomError(core, "IncorrectWinningOutcomesCount");
       });
@@ -1173,7 +1201,8 @@ context("Multi-outcome test", function () {
             [OUTCOMEWIN, OUTCOMESLOSE[0], OUTCOMESLOSE[1], OUTCOMESLOSE[2]],
             REINFORCEMENT,
             MARGINALITY,
-            2
+            2,
+            false
           );
         await expect(core.connect(oracle).resolveCondition(condId, [OUTCOMEWIN])).to.be.revertedWithCustomError(
           core,
@@ -1193,7 +1222,8 @@ context("Multi-outcome test", function () {
             [OUTCOMEWIN, OUTCOMESLOSE[0], OUTCOMESLOSE[1]],
             REINFORCEMENT,
             0,
-            2
+            2,
+            false
           );
         await expect(core.connect(oracle).changeOdds(condId, [15000, 30000, 30000])).to.be.revertedWithCustomError(
           core,
@@ -1210,7 +1240,8 @@ context("Multi-outcome test", function () {
             [OUTCOMEWIN, OUTCOMESLOSE[0], OUTCOMESLOSE[1], OUTCOMESLOSE[2]],
             REINFORCEMENT,
             0,
-            2
+            2,
+            false
           );
         await expect(
           core.connect(oracle).changeOdds(condId, [15000, 45000, 45000, 45000])
@@ -1227,7 +1258,8 @@ context("Multi-outcome test", function () {
             [OUTCOMEWIN, OUTCOMESLOSE[0], OUTCOMESLOSE[1]],
             REINFORCEMENT,
             MARGINALITY,
-            2
+            2,
+            false
           );
 
         await expect(
@@ -1244,7 +1276,8 @@ context("Multi-outcome test", function () {
             [OUTCOMEWIN, OUTCOMESLOSE[0], OUTCOMESLOSE[1]],
             REINFORCEMENT,
             0,
-            2
+            2,
+            false
           );
 
         await expect(

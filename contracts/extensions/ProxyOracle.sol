@@ -24,11 +24,10 @@ contract ProxyOracle is OwnableUpgradeable, IProxyOracle {
         _;
     }
 
-    function initialize(address access_, address lp_)
-        external
-        virtual
-        initializer
-    {
+    function initialize(
+        address access_,
+        address lp_
+    ) external virtual initializer {
         __Ownable_init();
         access = IAccess(access_);
         lp = ILP(lp_);
@@ -38,10 +37,9 @@ contract ProxyOracle is OwnableUpgradeable, IProxyOracle {
     /**
      * @notice Owner: Change maximum condition reinforcement limit to `reinforcementLimit_`.
      */
-    function changeReinforcementLimit(uint128 reinforcementLimit_)
-        external
-        onlyOwner
-    {
+    function changeReinforcementLimit(
+        uint128 reinforcementLimit_
+    ) external onlyOwner {
         reinforcementLimit = reinforcementLimit_;
         emit ReinforcementLimitChanged(reinforcementLimit_);
     }
@@ -50,10 +48,9 @@ contract ProxyOracle is OwnableUpgradeable, IProxyOracle {
      * @notice The batch version of {ILP-createGame}.
      * @param  data an array of input data structures for creating games using {ILP-createGame}
      */
-    function createGames(CreateGameData[] calldata data)
-        external
-        restricted(this.createGames.selector)
-    {
+    function createGames(
+        CreateGameData[] calldata data
+    ) external restricted(this.createGames.selector) {
         for (uint256 i = 0; i < data.length; ++i) {
             lp.createGame(data[i].gameId, data[i].startsAt, data[i].data);
         }
@@ -63,10 +60,9 @@ contract ProxyOracle is OwnableUpgradeable, IProxyOracle {
      * @notice The batch version of {ILP-cancelGame}.
      * @param  gameIds IDs of the games to be canceled
      */
-    function cancelGames(uint256[] calldata gameIds)
-        external
-        restricted(this.cancelGames.selector)
-    {
+    function cancelGames(
+        uint256[] calldata gameIds
+    ) external restricted(this.cancelGames.selector) {
         for (uint256 i = 0; i < gameIds.length; ++i) {
             lp.cancelGame(gameIds[i]);
         }
@@ -76,10 +72,9 @@ contract ProxyOracle is OwnableUpgradeable, IProxyOracle {
      * @notice The batch version of {ILP-shiftGame}.
      * @param  data an array of input data structures for changing games start using {ILP-shiftGame}
      */
-    function shiftGames(ShiftGameData[] calldata data)
-        external
-        restricted(this.shiftGames.selector)
-    {
+    function shiftGames(
+        ShiftGameData[] calldata data
+    ) external restricted(this.shiftGames.selector) {
         for (uint256 i = 0; i < data.length; ++i) {
             lp.shiftGame(data[i].gameId, data[i].startsAt);
         }
@@ -90,10 +85,10 @@ contract ProxyOracle is OwnableUpgradeable, IProxyOracle {
      * @param  core the address of the Core using for creating conditions
      * @param  data an array of input data structures for changing conditions margin using {IPrematchCore-changeMargin}
      */
-    function changeMargins(address core, changeMarginData[] calldata data)
-        external
-        restricted(this.changeMargins.selector)
-    {
+    function changeMargins(
+        address core,
+        changeMarginData[] calldata data
+    ) external restricted(this.changeMargins.selector) {
         IPrematchCore core_ = IPrematchCore(core);
         for (uint256 i = 0; i < data.length; ++i)
             core_.changeMargin(data[i].conditionId, data[i].margin);
@@ -124,10 +119,10 @@ contract ProxyOracle is OwnableUpgradeable, IProxyOracle {
      * @param  core the address of the Core using for creating conditions
      * @param  data an array of input data structures for creating conditions using {IPrematchCore-createCondition}
      */
-    function createConditions(address core, CreateConditionData[] calldata data)
-        external
-        restricted(this.createConditions.selector)
-    {
+    function createConditions(
+        address core,
+        CreateConditionData[] calldata data
+    ) external restricted(this.createConditions.selector) {
         IPrematchCore core_ = IPrematchCore(core);
         uint256 reinforcementLimit_ = reinforcementLimit;
         for (uint256 i = 0; i < data.length; ++i) {
@@ -144,7 +139,8 @@ contract ProxyOracle is OwnableUpgradeable, IProxyOracle {
                 data_.outcomes,
                 reinforcement,
                 data_.margin,
-                data_.winningOutcomesCount
+                data_.winningOutcomesCount,
+                data_.isExpressForbidden
             );
         }
     }
@@ -154,10 +150,10 @@ contract ProxyOracle is OwnableUpgradeable, IProxyOracle {
      * @param  core the address of the Core using for canceling conditions
      * @param  conditionIds IDs of the conditions to be canceled
      */
-    function cancelConditions(address core, uint256[] calldata conditionIds)
-        external
-        restricted(this.cancelConditions.selector)
-    {
+    function cancelConditions(
+        address core,
+        uint256[] calldata conditionIds
+    ) external restricted(this.cancelConditions.selector) {
         IPrematchCore core_ = IPrematchCore(core);
         for (uint256 i = 0; i < conditionIds.length; ++i) {
             core_.cancelCondition(conditionIds[i]);
@@ -169,10 +165,10 @@ contract ProxyOracle is OwnableUpgradeable, IProxyOracle {
      * @param  core the address of the Core using for changing odds
      * @param  data an array of input data structures for changing odds using {IPrematchCore-changeOdds}.
      */
-    function changeOdds(address core, ChangeOddsData[] calldata data)
-        external
-        restricted(this.changeOdds.selector)
-    {
+    function changeOdds(
+        address core,
+        ChangeOddsData[] calldata data
+    ) external restricted(this.changeOdds.selector) {
         IPrematchCore core_ = IPrematchCore(core);
         for (uint256 i = 0; i < data.length; ++i) {
             core_.changeOdds(data[i].conditionId, data[i].odds);
@@ -202,10 +198,10 @@ contract ProxyOracle is OwnableUpgradeable, IProxyOracle {
      * @param  core the address of the Core using for stopping conditions
      * @param  data an array of input data structures for stopping conditions using {IPrematchCore-stopConditions}.
      */
-    function stopConditions(address core, StopConditionData[] calldata data)
-        external
-        restricted(this.stopConditions.selector)
-    {
+    function stopConditions(
+        address core,
+        StopConditionData[] calldata data
+    ) external restricted(this.stopConditions.selector) {
         IPrematchCore core_ = IPrematchCore(core);
         for (uint256 i = 0; i < data.length; ++i) {
             core_.stopCondition(data[i].conditionId, data[i].flag);

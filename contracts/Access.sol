@@ -81,10 +81,10 @@ contract Access is OwnableUpgradeable, ERC721EnumerableUpgradeable, IAccess {
     /**
      * @notice Change role `roleId` name to `roleName`.
      */
-    function renameRole(uint8 roleId, string calldata roleName)
-        external
-        onlyOwner
-    {
+    function renameRole(
+        uint8 roleId,
+        string calldata roleName
+    ) external onlyOwner {
         bytes32 _role = roleName.toBytes32();
         roles[roleId] = _role;
         emit RoleRenamed(_role, roleId);
@@ -134,11 +134,10 @@ contract Access is OwnableUpgradeable, ERC721EnumerableUpgradeable, IAccess {
     /**
      * @notice Check if account `account` have role `roleId`.
      */
-    function roleGranted(address account, uint8 roleId)
-        public
-        view
-        returns (bool)
-    {
+    function roleGranted(
+        address account,
+        uint8 roleId
+    ) public view returns (bool) {
         uint256 roleBit = 1 << roleId;
         return (userRoles[account] & roleBit) == roleBit;
     }
@@ -146,11 +145,10 @@ contract Access is OwnableUpgradeable, ERC721EnumerableUpgradeable, IAccess {
     /**
      * @notice Get ID of function with selector `selector` of contract `target`.
      */
-    function getFunctionId(address target, bytes4 selector)
-        public
-        pure
-        returns (bytes32)
-    {
+    function getFunctionId(
+        address target,
+        bytes4 selector
+    ) public pure returns (bytes32) {
         return bytes32(abi.encodePacked(target)) | (bytes32(selector) >> 224);
     }
 

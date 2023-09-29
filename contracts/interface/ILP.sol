@@ -9,7 +9,8 @@ import "@openzeppelin/contracts-upgradeable/token/ERC721/extensions/IERC721Enume
 interface ILP is IOwnable, IERC721EnumerableUpgradeable {
     enum FeeType {
         DAO,
-        DATA_PROVIDER
+        DATA_PROVIDER,
+        AFFILIATES
     }
 
     enum CoreState {
@@ -49,6 +50,7 @@ interface ILP is IOwnable, IERC721EnumerableUpgradeable {
         uint128 minBet
     );
 
+    event AffiliateChanged(address newAffilaite);
     event BettorWin(
         address indexed core,
         address indexed bettor,
@@ -113,26 +115,30 @@ interface ILP is IOwnable, IERC721EnumerableUpgradeable {
     function initialize(
         address access,
         address dataProvider,
+        address affiliate,
         address token,
         uint128 minDepo,
         uint64 daoFee,
-        uint64 dataProviderFee
+        uint64 dataProviderFee,
+        uint64 affiliateFee
     ) external;
 
     function addCore(address core) external;
 
-    function addLiquidity(uint128 amount, bytes calldata data)
-        external
-        returns (uint48);
+    function addLiquidity(
+        uint128 amount,
+        bytes calldata data
+    ) external returns (uint48);
 
-    function withdrawLiquidity(uint48 depositId, uint40 percent)
-        external
-        returns (uint128);
+    function withdrawLiquidity(
+        uint48 depositId,
+        uint40 percent
+    ) external returns (uint128);
 
-    function viewPayout(address core, uint256 tokenId)
-        external
-        view
-        returns (uint128 payout);
+    function viewPayout(
+        address core,
+        uint256 tokenId
+    ) external view returns (uint128 payout);
 
     function betFor(
         address bettor,
@@ -172,12 +178,15 @@ interface ILP is IOwnable, IERC721EnumerableUpgradeable {
 
     function addCondition(uint256 gameId) external view returns (uint64);
 
-    function withdrawPayout(address core, uint256 tokenId)
-        external
-        returns (uint128);
+    function withdrawPayout(
+        address core,
+        uint256 tokenId
+    ) external returns (uint128);
 
-    function changeLockedLiquidity(uint256 gameId, int128 deltaReserve)
-        external;
+    function changeLockedLiquidity(
+        uint256 gameId,
+        int128 deltaReserve
+    ) external;
 
     /**
      * @notice Indicate the game `gameId` as canceled.
@@ -204,20 +213,17 @@ interface ILP is IOwnable, IERC721EnumerableUpgradeable {
      */
     function shiftGame(uint256 gameId, uint64 startsAt) external;
 
-    function getGameInfo(uint256 gameId)
-        external
-        view
-        returns (uint64 startsAt, bool canceled);
+    function getGameInfo(
+        uint256 gameId
+    ) external view returns (uint64 startsAt, bool canceled);
 
-    function getLockedLiquidityLimit(address core)
-        external
-        view
-        returns (uint128);
+    function getLockedLiquidityLimit(
+        address core
+    ) external view returns (uint128);
 
-    function isGameCanceled(uint256 gameId)
-        external
-        view
-        returns (bool canceled);
+    function isGameCanceled(
+        uint256 gameId
+    ) external view returns (bool canceled);
 
     function checkAccess(
         address account,

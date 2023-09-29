@@ -35,6 +35,48 @@ abstract contract CoreBase is OwnableUpgradeable, ICoreBase {
         _;
     }
 
+    modifier resolveConditionBase(
+        uint256 conditionId,
+        uint64[] calldata winningOutcomes_
+    ) {
+        Condition storage condition = _getCondition(conditionId);
+        if (winningOutcomes_.length != condition.winningOutcomesCount)
+            revert IncorrectWinningOutcomesCount();
+
+        address oracle = condition.oracle;
+        if (msg.sender != oracle) revert OnlyOracle(oracle);
+        {
+            (uint64 timeOut, bool gameIsCanceled) = lp.getGameInfo(
+                condition.gameId
+            );
+            if (
+                /// TODO: Use only `_isConditionCanceled` to check if condition or its game is canceled
+                gameIsCanceled ||
+                condition.state == ConditionState.CANCELED ||
+                _isConditionResolved(condition)
+            ) revert ConditionAlreadyResolved();
+
+            timeOut += 1 minutes;
+            if (block.timestamp < timeOut) revert ResolveTooEarly(timeOut);
+        }
+
+        _;
+
+        uint128 payout;
+        for (uint256 i = 0; i < winningOutcomes_.length; ++i) {
+            payout += condition.payouts[
+                getOutcomeIndex(conditionId, winningOutcomes_[i])
+            ];
+        }
+        _resolveCondition(
+            condition,
+            conditionId,
+            ConditionState.RESOLVED,
+            winningOutcomes_,
+            payout
+        );
+    }
+
     /**
      * @notice Throw if caller have no access to function with selector `selector`.
      */
@@ -43,12 +85,10 @@ abstract contract CoreBase is OwnableUpgradeable, ICoreBase {
         _;
     }
 
-    function initialize(address azuroBet_, address lp_)
-        external
-        virtual
-        override
-        initializer
-    {
+    function initialize(
+        address azuroBet_,
+        address lp_
+    ) external virtual override initializer {
         __Ownable_init();
         azuroBet = IAzuroBet(azuroBet_);
         lp = ILP(lp_);
@@ -81,10 +121,10 @@ abstract contract CoreBase is OwnableUpgradeable, ICoreBase {
     /**
      * @notice See {ICoreBase-changeMargin}.
      */
-    function changeMargin(uint256 conditionId, uint64 newMargin)
-        external
-        restricted(this.changeMargin.selector)
-    {
+    function changeMargin(
+        uint256 conditionId,
+        uint64 newMargin
+    ) external restricted(this.changeMargin.selector) {
         Condition storage condition = _getCondition(conditionId);
         _conditionIsRunning(condition);
 
@@ -98,10 +138,10 @@ abstract contract CoreBase is OwnableUpgradeable, ICoreBase {
     /**
      * @notice See {ICoreBase-changeOdds}.
      */
-    function changeOdds(uint256 conditionId, uint256[] calldata newOdds)
-        external
-        restricted(this.changeOdds.selector)
-    {
+    function changeOdds(
+        uint256 conditionId,
+        uint256[] calldata newOdds
+    ) external restricted(this.changeOdds.selector) {
         Condition storage condition = _getCondition(conditionId);
         _conditionIsRunning(condition);
         if (newOdds.length != condition.payouts.length)
@@ -114,10 +154,10 @@ abstract contract CoreBase is OwnableUpgradeable, ICoreBase {
     /**
      * @notice See {ICoreBase-changeReinforcement}.
      */
-    function changeReinforcement(uint256 conditionId, uint128 newReinforcement)
-        external
-        restricted(this.changeReinforcement.selector)
-    {
+    function changeReinforcement(
+        uint256 conditionId,
+        uint128 newReinforcement
+    ) external restricted(this.changeReinforcement.selector) {
         Condition storage condition = _getCondition(conditionId);
         _conditionIsRunning(condition);
 
@@ -154,12 +194,26 @@ abstract contract CoreBase is OwnableUpgradeable, ICoreBase {
     }
 
     /**
+     * @notice Liquidity Pool: Resolve AzuroBet token `tokenId` payout.
+     * @param  tokenId AzuroBet token ID
+     * @return winning account
+     * @return amount of winnings
+     */
+    function resolvePayout(
+        uint256 tokenId
+    ) external override onlyLp returns (address, uint128) {
+        uint128 payout = viewPayout(tokenId);
+        bets[tokenId].isPaid = true;
+        return (azuroBet.ownerOf(tokenId), payout);
+    }
+
+    /**
      * @notice See {ICoreBase-stopCondition}.
      */
-    function stopCondition(uint256 conditionId, bool flag)
-        external
-        restricted(this.stopCondition.selector)
-    {
+    function stopCondition(
+        uint256 conditionId,
+        bool flag
+    ) external restricted(this.stopCondition.selector) {
         Condition storage condition = _getCondition(conditionId);
         // only CREATED state can be stopped
         // only PAUSED state can be restored
@@ -205,22 +259,19 @@ abstract contract CoreBase is OwnableUpgradeable, ICoreBase {
      * @param  conditionId the match or condition ID
      * @return the condition struct
      */
-    function getCondition(uint256 conditionId)
-        external
-        view
-        returns (Condition memory)
-    {
+    function getCondition(
+        uint256 conditionId
+    ) external view returns (Condition memory) {
         return conditions[conditionId];
     }
 
     /**
      * @notice Get condition's `conditionId` index of outcome `outcome`.
      */
-    function getOutcomeIndex(uint256 conditionId, uint64 outcome)
-        public
-        view
-        returns (uint256)
-    {
+    function getOutcomeIndex(
+        uint256 conditionId,
+        uint64 outcome
+    ) public view returns (uint256) {
         uint256 outcomeNumber = outcomeNumbers[conditionId][outcome];
         if (outcomeNumber == 0) revert WrongOutcome();
 
@@ -230,22 +281,19 @@ abstract contract CoreBase is OwnableUpgradeable, ICoreBase {
     /**
      * @notice Check if `outcome` is winning outcome of condition `conditionId`.
      */
-    function isOutcomeWinning(uint256 conditionId, uint64 outcome)
-        public
-        view
-        returns (bool)
-    {
+    function isOutcomeWinning(
+        uint256 conditionId,
+        uint64 outcome
+    ) public view returns (bool) {
         return winningOutcomes[conditionId][outcome];
     }
 
     /**
      * @notice Check if condition or game it is bound with is cancelled or not.
      */
-    function isConditionCanceled(uint256 conditionId)
-        public
-        view
-        returns (bool)
-    {
+    function isConditionCanceled(
+        uint256 conditionId
+    ) public view returns (bool) {
         return _isConditionCanceled(_getCondition(conditionId));
     }
 
@@ -262,6 +310,7 @@ abstract contract CoreBase is OwnableUpgradeable, ICoreBase {
         uint256 conditionId = bet.conditionId;
         Condition storage condition = _getCondition(conditionId);
         if (_isConditionResolved(condition)) {
+            if (bet.timestamp > condition.endsAt) return bet.amount;
             if (isOutcomeWinning(bet.conditionId, bet.outcome))
                 return bet.payout;
             else return 0;
@@ -280,6 +329,7 @@ abstract contract CoreBase is OwnableUpgradeable, ICoreBase {
      * @param  reinforcement maximum amount of liquidity intended to condition reinforcement
      * @param  margin bookmaker commission
      * @param  winningOutcomesCount the number of winning outcomes for the condition
+     * @param  isExpressForbidden true - not allowed to use in express bets
      */
     function _createCondition(
         uint256 gameId,
@@ -288,7 +338,8 @@ abstract contract CoreBase is OwnableUpgradeable, ICoreBase {
         uint64[] calldata outcomes,
         uint128 reinforcement,
         uint64 margin,
-        uint8 winningOutcomesCount
+        uint8 winningOutcomesCount,
+        bool isExpressForbidden
     ) internal {
         if (conditionId == 0) revert IncorrectConditionId();
         if (margin > FixedMath.ONE) revert IncorrectMargin();
@@ -319,6 +370,8 @@ abstract contract CoreBase is OwnableUpgradeable, ICoreBase {
         condition.winningOutcomesCount = winningOutcomesCount;
         condition.oracle = msg.sender;
         condition.lastDepositId = lp.getLastDepositId();
+        if (isExpressForbidden)
+            condition.isExpressForbidden = isExpressForbidden;
         _applyOdds(condition, odds);
 
         emit ConditionCreated(gameId, conditionId, outcomes);
@@ -380,9 +433,10 @@ abstract contract CoreBase is OwnableUpgradeable, ICoreBase {
      * @notice Calculate the distribution of available fund into [outcome1Fund,..., outcomeNFund] compliant to odds `odds`
      *         and set it as condition virtual funds.
      */
-    function _applyOdds(Condition storage condition, uint256[] memory odds)
-        internal
-    {
+    function _applyOdds(
+        Condition storage condition,
+        uint256[] memory odds
+    ) internal {
         uint256 length = odds.length;
         uint256 normalizer;
         for (uint256 i = 0; i < length; ++i) {
@@ -451,15 +505,11 @@ abstract contract CoreBase is OwnableUpgradeable, ICoreBase {
      *         the game the condition is bounded with is canceled.
      * @param  condition the condition pointer
      */
-    function _conditionIsRunning(Condition storage condition)
-        internal
-        view
-        virtual
-    {
-        if (condition.state != ConditionState.CREATED)
-            revert ConditionNotRunning();
-        (uint64 startsAt, bool gameIsCanceled) = lp.getGameInfo(
-            condition.gameId
+    function _conditionIsRunning(
+        Condition storage condition
+    ) internal view virtual {
+        (uint64 startsAt, bool gameIsCanceled) = _getRunningConditionGameInfo(
+            condition
         );
         if (gameIsCanceled || block.timestamp >= startsAt)
             revert ConditionNotRunning();
@@ -492,25 +542,29 @@ abstract contract CoreBase is OwnableUpgradeable, ICoreBase {
     /**
      * @notice Get condition by it's ID.
      */
-    function _getCondition(uint256 conditionId)
-        internal
-        view
-        returns (Condition storage)
-    {
+    function _getCondition(
+        uint256 conditionId
+    ) internal view returns (Condition storage) {
         Condition storage condition = conditions[conditionId];
         if (condition.gameId == 0) revert ConditionNotExists();
 
         return condition;
     }
 
+    function _getRunningConditionGameInfo(
+        Condition storage condition
+    ) internal view virtual returns (uint64 startsAt, bool gameIsCanceled) {
+        if (condition.state != ConditionState.CREATED)
+            revert ConditionNotRunning();
+        return lp.getGameInfo(condition.gameId);
+    }
+
     /**
      * @notice Check if condition or game it is bound with is cancelled or not.
      */
-    function _isConditionCanceled(Condition storage condition)
-        internal
-        view
-        returns (bool)
-    {
+    function _isConditionCanceled(
+        Condition storage condition
+    ) internal view returns (bool) {
         return
             lp.isGameCanceled(condition.gameId) ||
             condition.state == ConditionState.CANCELED;
@@ -519,11 +573,9 @@ abstract contract CoreBase is OwnableUpgradeable, ICoreBase {
     /**
      * @notice Check if condition is resolved or not.
      */
-    function _isConditionResolved(Condition storage condition)
-        internal
-        view
-        returns (bool)
-    {
+    function _isConditionResolved(
+        Condition storage condition
+    ) internal view returns (bool) {
         return condition.state == ConditionState.RESOLVED;
     }
 }

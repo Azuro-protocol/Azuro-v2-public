@@ -8,11 +8,10 @@ library Math {
      * @notice Get non-negative difference of `minuend` and `subtracted`.
      * @return `minuend - subtracted`if it is non-negative or 0
      */
-    function diffOrZero(uint256 minuend, uint256 subtracted)
-        internal
-        pure
-        returns (uint256)
-    {
+    function diffOrZero(
+        uint256 minuend,
+        uint256 subtracted
+    ) internal pure returns (uint256) {
         return minuend > subtracted ? minuend - subtracted : 0;
     }
 
@@ -41,11 +40,10 @@ library Math {
     /**
      * @notice Get the sum of `n` max items of `a`.
      */
-    function maxSum(uint128[] memory a, uint256 n)
-        internal
-        pure
-        returns (uint256 sum_)
-    {
+    function maxSum(
+        uint128[] memory a,
+        uint256 n
+    ) internal pure returns (uint256 sum_) {
         if (n == 1) return max(a);
 
         uint256 length = a.length;

@@ -72,7 +72,8 @@ interface ISafeOracle {
         uint128 reinforcement,
         uint64 margin,
         uint8 winningOutcomesCount,
-        uint64 proposeDeadline
+        uint64 proposeDeadline,
+        bool isExpressForbidden
     ) external;
 
     function approve(address core, uint256 conditionId) external;
@@ -91,8 +92,10 @@ interface ISafeOracle {
 
     function applyCancelCondition(address core, uint256 conditionId) external;
 
-    function handleCanceledCondition(address core, uint256 conditionId)
-        external;
+    function handleCanceledCondition(
+        address core,
+        uint256 conditionId
+    ) external;
 
     function withdraw(uint256 amount) external;
 

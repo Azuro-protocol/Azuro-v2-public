@@ -42,6 +42,7 @@ describe("BetExpress tests", function () {
   const minDepo = tokens(10);
   const daoFee = MULTIPLIER * 0.09; // 9%
   const oracleFee = MULTIPLIER * 0.01; // 1%
+  const affiliateFee = MULTIPLIER * 0.6; // 60%
 
   async function deployAndInit() {
     [factoryOwner, poolOwner, dataProvider, bettor1, oracle, oracle2, maintainer, bettor2, bettor3, affiliate] =
@@ -52,10 +53,12 @@ describe("BetExpress tests", function () {
       factoryOwner,
       poolOwner,
       dataProvider,
+      affiliate,
       bettor1,
       minDepo,
       daoFee,
       oracleFee,
+      affiliateFee,
       LIQUIDITY
     ));
 
@@ -102,9 +105,39 @@ describe("BetExpress tests", function () {
     await createGame(lp, oracle, ++oracleGameId, now + ONE_HOUR);
     await createGame(lp, oracle, ++oracleGameId, now + ONE_HOUR);
 
-    await createCondition(core, oracle, oracleGameId - 2, oracleCondId, [1, 1], OUTCOMES, reinforcement, marginality);
-    await createCondition(core, oracle, oracleGameId - 1, ++oracleCondId, [3, 2], OUTCOMES, reinforcement, marginality);
-    await createCondition(core, oracle, oracleGameId, ++oracleCondId, [1, 4], OUTCOMES, reinforcement, marginality);
+    await createCondition(
+      core,
+      oracle,
+      oracleGameId - 2,
+      oracleCondId,
+      [1, 1],
+      OUTCOMES,
+      reinforcement,
+      marginality,
+      false
+    );
+    await createCondition(
+      core,
+      oracle,
+      oracleGameId - 1,
+      ++oracleCondId,
+      [3, 2],
+      OUTCOMES,
+      reinforcement,
+      marginality,
+      false
+    );
+    await createCondition(
+      core,
+      oracle,
+      oracleGameId,
+      ++oracleCondId,
+      [1, 4],
+      OUTCOMES,
+      reinforcement,
+      marginality,
+      false
+    );
   }
 
   wrapLayer(deployAndInit);
@@ -121,7 +154,17 @@ describe("BetExpress tests", function () {
       lp.connect(bettor1).bet(betExpress.address, amount, now + ONE_WEEK, [affiliate.address, 0, subBets])
     ).to.be.revertedWithCustomError(betExpress, "SameGameIdsNotAllowed");
 
-    await createCondition(core, oracle, oracleGameId, oracleCondId + 1, [1, 2], OUTCOMES, reinforcement, marginality);
+    await createCondition(
+      core,
+      oracle,
+      oracleGameId,
+      oracleCondId + 1,
+      [1, 2],
+      OUTCOMES,
+      reinforcement,
+      marginality,
+      false
+    );
     const subBet4 = {
       conditionId: oracleCondId + 1,
       outcomeId: OUTCOMEWIN,
@@ -216,6 +259,34 @@ describe("BetExpress tests", function () {
       .withArgs(oracleCondId);
   });
 
+  it("Can't make bet with condition not for express", async () => {
+    await createGame(lp, oracle, oracleGameId + 1, now + ONE_HOUR);
+    await createCondition(
+      core,
+      oracle,
+      oracleGameId + 1,
+      oracleCondId + 1,
+      [1, 4],
+      OUTCOMES,
+      reinforcement,
+      marginality,
+      true
+    );
+    let subBet4 = {
+      conditionId: oracleCondId + 1,
+      outcomeId: OUTCOMEWIN,
+    };
+
+    const subBets2 = ethers.utils.defaultAbiCoder.encode(
+      ["tuple(uint256 conditionId, uint64 outcomeId)[]"],
+      [[subBet1, subBet2, subBet3, subBet4]]
+    );
+
+    await expect(
+      lp.connect(bettor1).bet(betExpress.address, tokens(1000), now + ONE_WEEK, [affiliate.address, 0, subBets2])
+    ).to.be.revertedWithCustomError(betExpress, "ConditionNotForExpress");
+  });
+
   it("Can't make bet on a stopped condition", async () => {
     await core.connect(maintainer).stopCondition(oracleCondId, true);
 
@@ -287,7 +358,8 @@ describe("BetExpress tests", function () {
       [1, 2],
       OUTCOMES,
       reinforcement,
-      marginality
+      marginality,
+      false
     );
     const subBet4 = {
       conditionId: oracleCondId + 1,
@@ -359,7 +431,8 @@ describe("BetExpress tests", function () {
         pools[i],
         OUTCOMES,
         reinforcement,
-        marginalities[i]
+        marginalities[i],
+        false
       );
       subBets[i] = {
         conditionId: conditionId,
@@ -495,7 +568,7 @@ describe("BetExpress tests", function () {
       await lp.connect(dataProvider).claimReward();
 
       expect(await lp.getReserve()).to.be.eq(
-        lpBefore.add(newBet.amount.mul(MULTIPLIER - (daoFee + oracleFee)).div(MULTIPLIER))
+        lpBefore.add(newBet.amount.mul(MULTIPLIER - (daoFee + oracleFee + affiliateFee)).div(MULTIPLIER))
       );
       expect(await lp.lockedLiquidity()).to.be.eq(lockedBefore);
       expect(await wxDAI.balanceOf(bettor1.address)).to.be.eq(balanceBefore);

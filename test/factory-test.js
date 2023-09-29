@@ -34,6 +34,7 @@ describe("Pool Factory test", function () {
   const minDepo = tokens(10);
   const daoFee = MULTIPLIER * 0.09; // 9%
   const dataProviderFee = MULTIPLIER * 0.01; // 1%
+  const affiliateFee = MULTIPLIER * 0.6; // 60%
 
   const pool1 = 5000000;
   const pool2 = 5000000;
@@ -84,7 +85,7 @@ describe("Pool Factory test", function () {
     // Create pool
     const txCreatePool = await factory
       .connect(poolOwner)
-      .createPool(wxDAI.address, minDepo, daoFee, dataProviderFee, "pre-match");
+      .createPool(wxDAI.address, minDepo, daoFee, dataProviderFee, affiliateFee, "pre-match");
 
     const txDetails = await getCreatePoolDetails(txCreatePool);
 
@@ -115,7 +116,8 @@ describe("Pool Factory test", function () {
       [pool2, pool1],
       [OUTCOMEWIN, OUTCOMELOSE],
       reinforcement,
-      marginality
+      marginality,
+      false
     );
 
     const tokenId = await makeBetGetTokenId(
@@ -127,7 +129,8 @@ describe("Pool Factory test", function () {
       betAmount,
       OUTCOMEWIN,
       time + 10,
-      0
+      0,
+      false
     );
 
     await expect(lp.connect(poolOwner).addCore(core.address)).to.be.revertedWithCustomError(lp, "OnlyFactory");
@@ -152,7 +155,8 @@ describe("Pool Factory test", function () {
         [pool2, pool1],
         [OUTCOMEWIN, OUTCOMELOSE],
         reinforcement,
-        marginality
+        marginality,
+        false
       )
     ).to.be.revertedWithCustomError(lp, "CoreNotActive");
   });
@@ -166,6 +170,7 @@ describe("Pool Factory test", function () {
       minDepo,
       daoFee,
       dataProviderFee,
+      affiliateFee,
       oracle.address
     );
 
@@ -177,6 +182,7 @@ describe("Pool Factory test", function () {
       minDepo,
       daoFee,
       dataProviderFee,
+      affiliateFee,
       oracle.address
     );
 
@@ -203,6 +209,7 @@ describe("Pool Factory test", function () {
       minDepo,
       daoFee,
       dataProviderFee,
+      affiliateFee,
       oracle.address
     ));
 
@@ -254,6 +261,7 @@ describe("Pool Factory test", function () {
       minDepo,
       daoFee,
       dataProviderFee,
+      affiliateFee,
       oracle.address
     ));
 

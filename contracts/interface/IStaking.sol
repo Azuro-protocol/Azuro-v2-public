@@ -39,9 +39,10 @@ interface IStakingConnector {
         uint256 nonce;
         address lp;
         address account;
-        uint256 depositLimit;
+        uint256 stakedAmount;
     }
 
+    event DepositRateChanged(uint64 newDepositRate);
     event OracleChanged(address newOracle);
 
     error InsufficientDepositLimit();

@@ -9,11 +9,10 @@ library FixedMath {
     /**
      * @notice Get the ratio of `self` and `other` that is larger than 'ONE'.
      */
-    function ratio(uint256 self, uint256 other)
-        internal
-        pure
-        returns (uint256)
-    {
+    function ratio(
+        uint256 self,
+        uint256 other
+    ) internal pure returns (uint256) {
         return self > other ? div(self, other) : div(other, self);
     }
 

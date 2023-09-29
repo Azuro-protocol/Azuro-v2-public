@@ -1,6 +1,5 @@
 const { expect } = require("chai");
 const { ethers } = require("hardhat");
-const { BigNumber } = require("ethers");
 const {
   getBlockTime,
   tokens,
@@ -13,13 +12,11 @@ const {
   initFixtureTree,
   makeBetGetTokenIdOdds,
 } = require("../utils/utils");
-const { BIGZERO } = require("../utils/constants");
 const LIQUIDITY = tokens(200000);
 const MULTIPLIER = 1e12;
 const ONE_DAY = 86400;
 const ONE_HOUR = 3600;
 const ONE_MINUTE = 60;
-const BETAMOUNT = tokens(100);
 
 const reinforcementCheck = async (
   proxyOracle,
@@ -92,6 +89,7 @@ describe("ProxyOracle test", function () {
   const minDepo = tokens(10);
   const daoFee = MULTIPLIER * 0.09; // 9%
   const dataProviderFee = MULTIPLIER * 0.01; // 1%
+  const affiliateFee = MULTIPLIER * 0.6; // 60%
 
   let dao, poolOwner, dataProvider, oracle, bettor;
   let access, core, lp, proxyOracle, proxyOracleAccess, coreTools;
@@ -102,17 +100,19 @@ describe("ProxyOracle test", function () {
   let wxDAI;
 
   async function deployAndInit() {
-    [dao, poolOwner, dataProvider, oracle, bettor, affiliate] = await ethers.getSigners();
+    [dao, poolOwner, dataProvider, affiliate, oracle, bettor, affiliate] = await ethers.getSigners();
 
     ({ access, core, lp, roleIds, wxDAI } = await prepareStand(
       ethers,
       dao,
       poolOwner,
       dataProvider,
+      affiliate,
       bettor,
       minDepo,
       daoFee,
       dataProviderFee,
+      affiliateFee,
       LIQUIDITY
     ));
 
@@ -149,7 +149,7 @@ describe("ProxyOracle test", function () {
       { target: proxyOracle.address, selector: "0xd58cf784", roleId: proxyOracleRoleIds["GameCreator"] }, // createGames
       { target: proxyOracle.address, selector: "0xf3897bfd", roleId: proxyOracleRoleIds["GameCanceler"] }, // cancelGames
       { target: proxyOracle.address, selector: "0x954093c4", roleId: proxyOracleRoleIds["GameShifter"] }, // shiftGames
-      { target: proxyOracle.address, selector: "0x490e18f8", roleId: proxyOracleRoleIds["ConditionCreator"] }, // createConditions
+      { target: proxyOracle.address, selector: "0x32823bc8", roleId: proxyOracleRoleIds["ConditionCreator"] }, // createConditions
       { target: proxyOracle.address, selector: "0x829b9682", roleId: proxyOracleRoleIds["ConditionCanceler"] }, // cancelConditions
       { target: proxyOracle.address, selector: "0xd9d0f338", roleId: proxyOracleRoleIds["ConditionResolver"] }, // resolveConditions
       { target: proxyOracle.address, selector: "0xa7d2cc49", roleId: proxyOracleRoleIds["ConditionStopper"] }, // stopConditions

@@ -21,7 +21,6 @@ const {
   changeMinBet,
   changeReinforcementAbility,
   getPluggedCore,
-  calcCashout,
 } = require("../utils/utils");
 const { ITERATIONS, MULTIPLIER } = require("../utils/constants");
 
@@ -39,16 +38,28 @@ const FEE5PERCENT = MULTIPLIER * 0.05;
 
 let conditionArr = [];
 
-const createCondition = async (core, oracle, gameId, condId, pools, outcomes, reinforcement, marginality) => {
-  await core.connect(oracle).createCondition(gameId, condId, pools, outcomes, reinforcement, marginality, 1);
+const createCondition = async (
+  core,
+  oracle,
+  gameId,
+  condId,
+  pools,
+  outcomes,
+  reinforcement,
+  marginality,
+  isExpressForbidden
+) => {
+  await core
+    .connect(oracle)
+    .createCondition(gameId, condId, pools, outcomes, reinforcement, marginality, 1, isExpressForbidden);
 
   conditionArr.push([oracle, condId]);
 };
 
 describe("Prematch Core test", function () {
-  let factoryOwner, poolOwner, dataProvider, bettor, lpOwner, affiliate, oracle, oracle2, maintainer;
+  let factoryOwner, poolOwner, dataProvider, bettor, affiliate, oracle, oracle2, maintainer;
   let factory, access, core, wxDAI, lp, azuroBet, coreTools;
-  let roleIds, lpNFT, time;
+  let roleIds, time;
 
   let gameId = 0;
   let condId = 0;
@@ -59,23 +70,25 @@ describe("Prematch Core test", function () {
   const minDepo = tokens(10);
   const daoFee = MULTIPLIER * 0.09; // 9%
   const dataProviderFee = MULTIPLIER * 0.01; // 1%
+  const affiliateFee = MULTIPLIER * 0.6; // 60%const affiliateFee = MULTIPLIER * 0.6; // 60%
 
   const pool1 = 5000000;
   const pool2 = 5000000;
 
   before(async () => {
-    [factoryOwner, poolOwner, dataProvider, bettor, lpOwner, affiliate, oracle, oracle2, maintainer] =
-      await ethers.getSigners();
+    [factoryOwner, poolOwner, dataProvider, bettor, affiliate, oracle, oracle2, maintainer] = await ethers.getSigners();
 
     ({ factory, access, core, wxDAI, lp, azuroBet, roleIds } = await prepareStand(
       ethers,
       factoryOwner,
       poolOwner,
       dataProvider,
+      affiliate,
       bettor,
       minDepo,
       daoFee,
       dataProviderFee,
+      affiliateFee,
       LIQUIDITY
     ));
     await prepareAccess(access, poolOwner, oracle.address, oracle2.address, maintainer.address, roleIds);
@@ -107,7 +120,17 @@ describe("Prematch Core test", function () {
       time = await getBlockTime(ethers);
       await createGame(lp, oracle, ++gameId, time + ONE_HOUR);
 
-      await createCondition(core, oracle, gameId, ++condId, [pool2, pool1], OUTCOMES, reinforcement, marginality);
+      await createCondition(
+        core,
+        oracle,
+        gameId,
+        ++condId,
+        [pool2, pool1],
+        OUTCOMES,
+        reinforcement,
+        marginality,
+        false
+      );
 
       await makeBetGetTokenIdOdds(lp, core, poolOwner, affiliate.address, condId, tokens(100), 1, time + 100, 0);
     });
@@ -156,17 +179,17 @@ describe("Prematch Core test", function () {
     });
     it("Manage roleIds", async () => {
       await expect(
-        access.checkAccess(bettor.address, core.address, "0xa08be625" /* createCondition */)
+        access.checkAccess(bettor.address, core.address, "0x7c768a38" /* createCondition */)
       ).to.be.revertedWithCustomError(access, "AccessNotGranted");
       await expect(grantRole(access, bettor, bettor.address, roleIds.oracle)).to.be.revertedWith(
         "Ownable: account is not the owner"
       );
 
       const accessToken = await grantRole(access, poolOwner, bettor.address, roleIds.oracle);
-      await access.checkAccess(bettor.address, core.address, "0xa08be625");
+      await access.checkAccess(bettor.address, core.address, "0x7c768a38");
 
       access.connect(poolOwner).burn(accessToken);
-      await expect(access.checkAccess(bettor.address, core.address, "0xa08be625")).to.be.revertedWithCustomError(
+      await expect(access.checkAccess(bettor.address, core.address, "0x7c768a38")).to.be.revertedWithCustomError(
         access,
         "AccessNotGranted"
       );
@@ -184,7 +207,8 @@ describe("Prematch Core test", function () {
           [pool2, pool1],
           [OUTCOMEWIN, [OUTCOMEWIN]], // must be not equal
           reinforcement,
-          marginality
+          marginality,
+          false
         )
       ).to.be.revertedWithCustomError(core, "DuplicateOutcomes");
 
@@ -197,7 +221,8 @@ describe("Prematch Core test", function () {
           [pool2, pool1],
           OUTCOMES,
           reinforcement,
-          MULTIPLIER + 1 // must belong to [0, 1]
+          MULTIPLIER + 1, // must belong to [0, 1]
+          false
         )
       ).to.be.revertedWithCustomError(core, "IncorrectMargin");
 
@@ -210,7 +235,8 @@ describe("Prematch Core test", function () {
           [0, pool1], // no zeros
           [OUTCOMELOSE, [OUTCOMEWIN]],
           reinforcement,
-          marginality
+          marginality,
+          false
         )
       ).to.be.revertedWithCustomError(core, "ZeroOdds");
 
@@ -223,7 +249,8 @@ describe("Prematch Core test", function () {
           [pool2, 0], // no zeros
           [OUTCOMELOSE, [OUTCOMEWIN]],
           reinforcement,
-          marginality
+          marginality,
+          false
         )
       ).to.be.revertedWithCustomError(core, "ZeroOdds");
     });
@@ -235,7 +262,17 @@ describe("Prematch Core test", function () {
 
       for (const i of Array(3).keys()) {
         condIds.push(++condId);
-        await createCondition(core, oracle, gameId, condId, [pool2, pool1], OUTCOMES, reinforcement, marginality);
+        await createCondition(
+          core,
+          oracle,
+          gameId,
+          condId,
+          [pool2, pool1],
+          OUTCOMES,
+          reinforcement,
+          marginality,
+          false
+        );
       }
 
       await timeShiftBy(ethers, ONE_HOUR + ONE_MINUTE);
@@ -291,7 +328,7 @@ describe("Prematch Core test", function () {
       time = await getBlockTime(ethers);
       await createGame(lp, oracle, ++gameId, time + ONE_HOUR);
 
-      await createCondition(core, oracle, gameId, ++condId, [10, 10000], OUTCOMES, reinforcement, marginality);
+      await createCondition(core, oracle, gameId, ++condId, [10, 10000], OUTCOMES, reinforcement, marginality, false);
 
       const betAmount = tokens(100);
       let { tokenId, odds } = await makeBetGetTokenIdOdds(
@@ -320,7 +357,7 @@ describe("Prematch Core test", function () {
 
       time = await getBlockTime(ethers);
       await createGame(lp, bettor, ++gameId, time + ONE_HOUR);
-      await createCondition(core, bettor, gameId, ++condId, [10, 10000], OUTCOMES, reinforcement, marginality);
+      await createCondition(core, bettor, gameId, ++condId, [10, 10000], OUTCOMES, reinforcement, marginality, false);
 
       await access.connect(poolOwner).burn(accessToken);
 
@@ -337,7 +374,7 @@ describe("Prematch Core test", function () {
 
       time = await getBlockTime(ethers);
       await createGame(lp, bettor, ++gameId, time + ONE_HOUR);
-      await createCondition(core, bettor, gameId, ++condId, [10, 10000], OUTCOMES, reinforcement, marginality);
+      await createCondition(core, bettor, gameId, ++condId, [10, 10000], OUTCOMES, reinforcement, marginality, false);
 
       await access.connect(poolOwner).burn(accessToken);
 
@@ -352,7 +389,9 @@ describe("Prematch Core test", function () {
 
       condId++;
       await expect(
-        core.connect(bettor).createCondition(gameId, condId, [pool2, pool1], OUTCOMES, reinforcement, marginality, 1)
+        core
+          .connect(bettor)
+          .createCondition(gameId, condId, [pool2, pool1], OUTCOMES, reinforcement, marginality, 1, false)
       ).to.be.revertedWithCustomError(access, "AccessNotGranted");
     });
     it("Should NOT create condition with ID 0", async () => {
@@ -360,7 +399,7 @@ describe("Prematch Core test", function () {
       await createGame(lp, oracle, ++gameId, time + ONE_HOUR);
 
       await expect(
-        core.connect(oracle).createCondition(gameId, 0, [pool2, pool1], OUTCOMES, reinforcement, marginality, 1)
+        core.connect(oracle).createCondition(gameId, 0, [pool2, pool1], OUTCOMES, reinforcement, marginality, 1, false)
       ).to.be.revertedWithCustomError(core, "IncorrectConditionId");
     });
     it("Should NOT create condition if the game is already started", async () => {
@@ -369,17 +408,29 @@ describe("Prematch Core test", function () {
 
       await timeShift(time + ONE_HOUR);
       await expect(
-        core.connect(oracle).createCondition(gameId, ++condId, [pool2, pool1], OUTCOMES, reinforcement, marginality, 1)
+        core
+          .connect(oracle)
+          .createCondition(gameId, ++condId, [pool2, pool1], OUTCOMES, reinforcement, marginality, 1, false)
       ).to.be.revertedWithCustomError(core, "GameAlreadyStarted");
     });
     it("Should NOT create condition that is already created", async () => {
       time = await getBlockTime(ethers);
       await createGame(lp, oracle, ++gameId, time + ONE_HOUR);
 
-      await createCondition(core, oracle, gameId, ++condId, [pool2, pool1], OUTCOMES, reinforcement, marginality);
+      await createCondition(
+        core,
+        oracle,
+        gameId,
+        ++condId,
+        [pool2, pool1],
+        OUTCOMES,
+        reinforcement,
+        marginality,
+        false
+      );
 
       await expect(
-        createCondition(core, oracle, gameId, condId, [pool2, pool1], OUTCOMES, reinforcement, marginality)
+        createCondition(core, oracle, gameId, condId, [pool2, pool1], OUTCOMES, reinforcement, marginality, false)
       ).to.be.revertedWithCustomError(core, "ConditionAlreadyCreated");
     });
     it("Should NOT resolve condition that not been created before", async () => {
@@ -393,7 +444,7 @@ describe("Prematch Core test", function () {
       await createGame(lp, oracle, ++gameId, time + ONE_HOUR);
 
       condId++;
-      await createCondition(core, oracle, gameId, condId, [pool2, pool1], OUTCOMES, reinforcement, marginality);
+      await createCondition(core, oracle, gameId, condId, [pool2, pool1], OUTCOMES, reinforcement, marginality, false);
 
       await timeShift(time + ONE_HOUR + ONE_MINUTE - 10);
       await expect(core.connect(oracle).resolveCondition(condId, [OUTCOMEWIN])).to.be.revertedWithCustomError(
@@ -409,7 +460,7 @@ describe("Prematch Core test", function () {
       await createGame(lp, oracle, ++gameId, time + ONE_HOUR);
 
       condId++;
-      await createCondition(core, oracle, gameId, condId, [pool2, pool1], OUTCOMES, reinforcement, marginality);
+      await createCondition(core, oracle, gameId, condId, [pool2, pool1], OUTCOMES, reinforcement, marginality, false);
 
       await expect(core.connect(bettor).resolveCondition(condId, [OUTCOMEWIN]))
         .to.be.revertedWithCustomError(core, "OnlyOracle")
@@ -420,7 +471,7 @@ describe("Prematch Core test", function () {
       await createGame(lp, oracle, ++gameId, time + ONE_HOUR);
 
       condId++;
-      await createCondition(core, oracle, gameId, condId, [pool2, pool1], OUTCOMES, reinforcement, marginality);
+      await createCondition(core, oracle, gameId, condId, [pool2, pool1], OUTCOMES, reinforcement, marginality, false);
 
       await expect(core.connect(oracle2).resolveCondition(condId, [OUTCOMEWIN]))
         .to.be.revertedWithCustomError(core, "OnlyOracle")
@@ -431,7 +482,7 @@ describe("Prematch Core test", function () {
       await createGame(lp, oracle, ++gameId, time + ONE_HOUR);
 
       condId++;
-      await createCondition(core, oracle, gameId, condId, [pool2, pool1], OUTCOMES, reinforcement, marginality);
+      await createCondition(core, oracle, gameId, condId, [pool2, pool1], OUTCOMES, reinforcement, marginality, false);
 
       await timeShift(time + ONE_HOUR + ONE_MINUTE);
       await expect(core.connect(oracle).resolveCondition(condId, [OUTCOMEINCORRECT])).to.be.revertedWithCustomError(
@@ -444,10 +495,10 @@ describe("Prematch Core test", function () {
       await createGame(lp, oracle, ++gameId, time + ONE_HOUR);
 
       const condId1 = ++condId;
-      await createCondition(core, oracle, gameId, condId1, [pool2, pool1], OUTCOMES, reinforcement, marginality);
+      await createCondition(core, oracle, gameId, condId1, [pool2, pool1], OUTCOMES, reinforcement, marginality, false);
 
       const condId2 = ++condId;
-      await createCondition(core, oracle, gameId, condId2, [pool2, pool1], OUTCOMES, reinforcement, marginality);
+      await createCondition(core, oracle, gameId, condId2, [pool2, pool1], OUTCOMES, reinforcement, marginality, false);
 
       let tokenId = await makeBetGetTokenId(
         lp,
@@ -484,7 +535,7 @@ describe("Prematch Core test", function () {
       await createGame(lp, oracle, ++gameId, time + ONE_HOUR);
 
       condId++;
-      await createCondition(core, oracle, gameId, condId, [pool2, pool1], OUTCOMES, reinforcement, marginality);
+      await createCondition(core, oracle, gameId, condId, [pool2, pool1], OUTCOMES, reinforcement, marginality, false);
 
       let tokenId = await makeBetGetTokenId(
         lp,
@@ -530,15 +581,15 @@ describe("Prematch Core test", function () {
 
       // try to create condition bounded with incorrect game
       await expect(
-        createCondition(core, oracle, 0, ++condId, [pool2, pool1], OUTCOMES, reinforcement, marginality)
+        createCondition(core, oracle, 0, ++condId, [pool2, pool1], OUTCOMES, reinforcement, marginality, false)
       ).to.be.revertedWithCustomError(lp, "GameNotExists");
 
       // create conditions
       const condId1 = ++condId;
-      await createCondition(core, oracle, gameId, condId1, [pool2, pool1], OUTCOMES, reinforcement, marginality);
+      await createCondition(core, oracle, gameId, condId1, [pool2, pool1], OUTCOMES, reinforcement, marginality, false);
 
       const condId2 = ++condId;
-      await createCondition(core, oracle, gameId, condId2, [pool2, pool1], OUTCOMES, reinforcement, marginality);
+      await createCondition(core, oracle, gameId, condId2, [pool2, pool1], OUTCOMES, reinforcement, marginality, false);
 
       // make bets
 
@@ -592,7 +643,7 @@ describe("Prematch Core test", function () {
 
       // try to create condition bounded with canceled game
       await expect(
-        createCondition(core, oracle, gameId, condId + 1, [pool2, pool1], OUTCOMES, reinforcement, marginality)
+        createCondition(core, oracle, gameId, condId + 1, [pool2, pool1], OUTCOMES, reinforcement, marginality, false)
       ).to.be.revertedWithCustomError(lp, "GameCanceled_");
 
       // try to make bet for condition bounded with canceled game
@@ -642,7 +693,7 @@ describe("Prematch Core test", function () {
       await createGame(lp, oracle, ++gameId, time + ONE_HOUR);
 
       condId++;
-      await createCondition(core, oracle, gameId, condId, [pool2, pool1], OUTCOMES, reinforcement, marginality);
+      await createCondition(core, oracle, gameId, condId, [pool2, pool1], OUTCOMES, reinforcement, marginality, false);
 
       await expect(lp.connect(maintainer).shiftGame(gameId, time)).to.be.revertedWithCustomError(
         access,
@@ -662,7 +713,17 @@ describe("Prematch Core test", function () {
         await createGame(lp, oracle, ++gameId, time + ONE_HOUR);
       });
       it("Check restrictions", async () => {
-        await createCondition(core, oracle, gameId, ++condId, [pool2, pool1], OUTCOMES, reinforcement, marginality);
+        await createCondition(
+          core,
+          oracle,
+          gameId,
+          ++condId,
+          [pool2, pool1],
+          OUTCOMES,
+          reinforcement,
+          marginality,
+          false
+        );
 
         const newOdds = [100, 10000];
         const newOdds2 = [10000, 100];
@@ -703,7 +764,17 @@ describe("Prematch Core test", function () {
         await createGame(lp, oracle, ++gameId, time + ONE_HOUR);
 
         // Canceled condition
-        await createCondition(core, oracle, gameId, ++condId, [pool2, pool1], OUTCOMES, reinforcement, marginality);
+        await createCondition(
+          core,
+          oracle,
+          gameId,
+          ++condId,
+          [pool2, pool1],
+          OUTCOMES,
+          reinforcement,
+          marginality,
+          false
+        );
 
         await core.connect(oracle).changeOdds(condId, newOdds); // success
         await core.connect(oracle).cancelCondition(condId);
@@ -713,7 +784,17 @@ describe("Prematch Core test", function () {
         );
 
         // Canceled game
-        await createCondition(core, oracle, gameId, ++condId, [pool2, pool1], OUTCOMES, reinforcement, marginality);
+        await createCondition(
+          core,
+          oracle,
+          gameId,
+          ++condId,
+          [pool2, pool1],
+          OUTCOMES,
+          reinforcement,
+          marginality,
+          false
+        );
 
         await core.connect(oracle).changeOdds(condId, newOdds); // success
         await lp.connect(oracle).cancelGame(gameId);
@@ -724,13 +805,23 @@ describe("Prematch Core test", function () {
       });
       it("Change odds before betting starts", async () => {
         const condId1 = ++condId;
-        await createCondition(core, oracle, gameId, condId1, [pool2, pool1], OUTCOMES, reinforcement, marginality);
+        await createCondition(
+          core,
+          oracle,
+          gameId,
+          condId1,
+          [pool2, pool1],
+          OUTCOMES,
+          reinforcement,
+          marginality,
+          false
+        );
 
         const newOdds = [100, 10000];
         await core.connect(oracle).changeOdds(condId1, newOdds);
 
         const condId2 = ++condId;
-        await createCondition(core, oracle, gameId, condId2, newOdds, OUTCOMES, reinforcement, marginality);
+        await createCondition(core, oracle, gameId, condId2, newOdds, OUTCOMES, reinforcement, marginality, false);
 
         const betAmount = tokens(100);
         let res = await makeBetGetTokenIdOdds(
@@ -785,7 +876,17 @@ describe("Prematch Core test", function () {
       });
       it("Change odds after betting starts", async () => {
         const condId1 = ++condId;
-        await createCondition(core, oracle, gameId, condId1, [pool2, pool1], OUTCOMES, reinforcement, marginality);
+        await createCondition(
+          core,
+          oracle,
+          gameId,
+          condId1,
+          [pool2, pool1],
+          OUTCOMES,
+          reinforcement,
+          marginality,
+          false
+        );
 
         const betAmount = tokens(100);
         let res = await makeBetGetTokenIdOdds(
@@ -813,7 +914,8 @@ describe("Prematch Core test", function () {
           newOdds,
           OUTCOMES,
           reinforcement.sub(payout.sub(betAmount)),
-          marginality
+          marginality,
+          false
         );
 
         res = await makeBetGetTokenIdOdds(
@@ -870,7 +972,17 @@ describe("Prematch Core test", function () {
         const betAmount = tokens(100);
         const reinforcement = betAmount.mul(1000).div(MULTIPLIER / 2 - 1000) - 1;
 
-        await createCondition(core, oracle, gameId, ++condId, [50000, 50000], OUTCOMES, reinforcement, marginality);
+        await createCondition(
+          core,
+          oracle,
+          gameId,
+          ++condId,
+          [50000, 50000],
+          OUTCOMES,
+          reinforcement,
+          marginality,
+          false
+        );
 
         await expect(
           makeBetGetTokenIdOdds(lp, core, bettor, affiliate.address, condId, betAmount, [OUTCOMEWIN], time + 100, 0)
@@ -882,7 +994,17 @@ describe("Prematch Core test", function () {
       it("Change odds to break reinforcement limit", async () => {
         const reinforcement = tokens(1);
 
-        await createCondition(core, oracle, gameId, ++condId, [pool2, pool1], OUTCOMES, reinforcement, marginality);
+        await createCondition(
+          core,
+          oracle,
+          gameId,
+          ++condId,
+          [pool2, pool1],
+          OUTCOMES,
+          reinforcement,
+          marginality,
+          false
+        );
 
         const balance = await wxDAI.balanceOf(bettor.address);
         const reserves = await lp.getReserve();
@@ -917,7 +1039,17 @@ describe("Prematch Core test", function () {
         expect(await lp.getReserve()).to.be.gte(reserves.sub(reinforcement));
       });
       it("Change odds randomly", async function () {
-        await createCondition(core, oracle, gameId, ++condId, [pool2, pool1], OUTCOMES, reinforcement, marginality);
+        await createCondition(
+          core,
+          oracle,
+          gameId,
+          ++condId,
+          [pool2, pool1],
+          OUTCOMES,
+          reinforcement,
+          marginality,
+          false
+        );
         const lockedLiquidity = await lp.lockedLiquidity();
 
         let totalNetBets = constants.Zero;
@@ -1019,7 +1151,7 @@ describe("Prematch Core test", function () {
       await createGame(lp, oracle, ++gameId, time + ONE_HOUR);
 
       condId++;
-      await createCondition(core, oracle, gameId, condId, [pool2, pool1], OUTCOMES, reinforcement, marginality);
+      await createCondition(core, oracle, gameId, condId, [pool2, pool1], OUTCOMES, reinforcement, marginality, false);
     });
     it("Create conditions, make bets, stop one/all/release conditions, make bets", async () => {
       time = await getBlockTime(ethers);
@@ -1031,7 +1163,17 @@ describe("Prematch Core test", function () {
       // create 5 conditions and make bets
       for (const i of Array(5).keys()) {
         condIds.push(++condId);
-        await createCondition(core, oracle, gameId, condId, [pool2, pool1], OUTCOMES, reinforcement, marginality);
+        await createCondition(
+          core,
+          oracle,
+          gameId,
+          condId,
+          [pool2, pool1],
+          OUTCOMES,
+          reinforcement,
+          marginality,
+          false
+        );
         tokenWin = makeBetGetTokenId(
           lp,
           core,
@@ -1050,7 +1192,7 @@ describe("Prematch Core test", function () {
 
       // try to make one new condition
       await expect(
-        createCondition(core, oracle, gameId, ++condId, [pool2, pool1], OUTCOMES, reinforcement, marginality)
+        createCondition(core, oracle, gameId, ++condId, [pool2, pool1], OUTCOMES, reinforcement, marginality, false)
       ).to.be.revertedWithCustomError(lp, "CoreNotActive");
 
       // try bet on any of conditions will be failed
@@ -1163,7 +1305,17 @@ describe("Prematch Core test", function () {
       time = await getBlockTime(ethers);
       await createGame(lp, oracle, ++gameId, time + ONE_HOUR);
 
-      await createCondition(core, oracle, gameId, ++condId, [pool2, pool1], OUTCOMES, reinforcement, marginality);
+      await createCondition(
+        core,
+        oracle,
+        gameId,
+        ++condId,
+        [pool2, pool1],
+        OUTCOMES,
+        reinforcement,
+        marginality,
+        false
+      );
 
       const betAmount = 1;
       const tokensWin = [],
@@ -1220,7 +1372,17 @@ describe("Prematch Core test", function () {
       time = await getBlockTime(ethers);
       await createGame(lp, oracle, ++gameId, time + ONE_HOUR);
 
-      await createCondition(core, oracle, gameId, ++condId, [pool2, pool1], OUTCOMES, reinforcement, marginality);
+      await createCondition(
+        core,
+        oracle,
+        gameId,
+        ++condId,
+        [pool2, pool1],
+        OUTCOMES,
+        reinforcement,
+        marginality,
+        false
+      );
 
       const betAmount = tokens(100000);
       const tokensWin = [],
@@ -1276,7 +1438,7 @@ describe("Prematch Core test", function () {
       await createGame(lp, oracle, ++gameId, time + ONE_HOUR);
 
       condId++;
-      await createCondition(core, oracle, gameId, condId, [pool2, pool1], OUTCOMES, reinforcement, marginality);
+      await createCondition(core, oracle, gameId, condId, [pool2, pool1], OUTCOMES, reinforcement, marginality, false);
 
       const tokenId = await makeBetGetTokenId(
         lp,
@@ -1303,7 +1465,7 @@ describe("Prematch Core test", function () {
       time = await getBlockTime(ethers);
       await createGame(lp, oracle, ++gameId, time + ONE_HOUR);
 
-      await createCondition(core, oracle, gameId, ++condId, [10, 10000], OUTCOMES, reinforcement, marginality);
+      await createCondition(core, oracle, gameId, ++condId, [10, 10000], OUTCOMES, reinforcement, marginality, false);
 
       const tokensWin = [],
         payouts = [];
@@ -1339,7 +1501,7 @@ describe("Prematch Core test", function () {
       time = await getBlockTime(ethers);
       await createGame(lp, oracle, ++gameId, time + ONE_HOUR);
 
-      await createCondition(core, oracle, gameId, ++condId, [10000, 10], OUTCOMES, reinforcement, marginality);
+      await createCondition(core, oracle, gameId, ++condId, [10000, 10], OUTCOMES, reinforcement, marginality, false);
 
       const tokensWin = [],
         payouts = [];
@@ -1375,7 +1537,17 @@ describe("Prematch Core test", function () {
       time = await getBlockTime(ethers);
       await createGame(lp, oracle, ++gameId, time + ONE_HOUR);
 
-      await createCondition(core, oracle, gameId, ++condId, [10000, 10], OUTCOMES, betAmount.div(1e8), marginality);
+      await createCondition(
+        core,
+        oracle,
+        gameId,
+        ++condId,
+        [10000, 10],
+        OUTCOMES,
+        betAmount.div(1e8),
+        marginality,
+        false
+      );
 
       const tokensWin = [],
         tokensLose = [],
@@ -1429,7 +1601,17 @@ describe("Prematch Core test", function () {
       time = await getBlockTime(ethers);
       await createGame(lp, oracle, ++gameId, time + ONE_HOUR);
 
-      await createCondition(core, oracle, gameId, ++condId, [pool2, pool1], OUTCOMES, reinforcement, marginality);
+      await createCondition(
+        core,
+        oracle,
+        gameId,
+        ++condId,
+        [pool2, pool1],
+        OUTCOMES,
+        reinforcement,
+        marginality,
+        false
+      );
 
       const betAmount = tokens(100000);
       const tokensWin = [],
@@ -1543,7 +1725,17 @@ describe("Prematch Core test", function () {
       time = await getBlockTime(ethers);
       await createGame(lp, oracle, ++gameId, time + ONE_HOUR);
 
-      await createCondition(core, oracle, gameId, ++condId, [pool2, pool1], OUTCOMES, reinforcement, marginality);
+      await createCondition(
+        core,
+        oracle,
+        gameId,
+        ++condId,
+        [pool2, pool1],
+        OUTCOMES,
+        reinforcement,
+        marginality,
+        false
+      );
 
       const daoBal = await wxDAI.balanceOf(poolOwner.address);
       const bettorBal = await wxDAI.balanceOf(bettor.address);
@@ -1573,7 +1765,17 @@ describe("Prematch Core test", function () {
       time = await getBlockTime(ethers);
       await createGame(lp, oracle, ++gameId, time + ONE_HOUR);
 
-      await createCondition(core, oracle, gameId, ++condId, [pool2, pool1], OUTCOMES, reinforcement, marginality);
+      await createCondition(
+        core,
+        oracle,
+        gameId,
+        ++condId,
+        [pool2, pool1],
+        OUTCOMES,
+        reinforcement,
+        marginality,
+        false
+      );
 
       const betAmount = tokens(100);
       let { tokenId, odds } = await makeBetGetTokenIdOdds(
@@ -1608,7 +1810,17 @@ describe("Prematch Core test", function () {
       time = await getBlockTime(ethers);
       await createGame(lp, oracle, ++gameId, time + ONE_HOUR);
 
-      await createCondition(core, oracle, gameId, ++condId, [pool2, pool1], OUTCOMES, reinforcement, marginality);
+      await createCondition(
+        core,
+        oracle,
+        gameId,
+        ++condId,
+        [pool2, pool1],
+        OUTCOMES,
+        reinforcement,
+        marginality,
+        false
+      );
 
       const betAmount = tokens(100);
       const tokenId = await makeBetGetTokenId(
@@ -1672,7 +1884,7 @@ describe("Prematch Core test", function () {
       await createGame(lp, oracle, ++gameId, time + ONE_HOUR);
       //  EVENT: create condition
       condId++;
-      await createCondition(core, oracle, gameId, condId, [pool2, pool1], OUTCOMES, reinforcement, marginality);
+      await createCondition(core, oracle, gameId, condId, [pool2, pool1], OUTCOMES, reinforcement, marginality, false);
 
       let deadline = time + 10;
       let minrate = await core.calcOdds(condId, betAmount, [OUTCOMEWIN]);
@@ -1763,7 +1975,7 @@ describe("Prematch Core test", function () {
       await createGame(lp, oracle, ++gameId, time + ONE_HOUR);
 
       condId++;
-      await createCondition(core, oracle, gameId, condId, [pool2, pool1], OUTCOMES, reinforcement, marginality);
+      await createCondition(core, oracle, gameId, condId, [pool2, pool1], OUTCOMES, reinforcement, marginality, false);
 
       await expect(
         makeBetGetTokenId(lp, core, poolOwner, affiliate.address, condId, 0, [OUTCOMEWIN], time + 100, 0)
@@ -1782,7 +1994,7 @@ describe("Prematch Core test", function () {
       await createGame(lp, oracle, ++gameId, time + ONE_HOUR);
 
       condId++;
-      await createCondition(core, oracle, gameId, condId, [pool2, pool1], OUTCOMES, reinforcement, marginality);
+      await createCondition(core, oracle, gameId, condId, [pool2, pool1], OUTCOMES, reinforcement, marginality, false);
 
       await expect(
         makeBetGetTokenId(lp, core, poolOwner, affiliate.address, condId, tokens(100), OUTCOMEINCORRECT, time + 100, 0)
@@ -1792,7 +2004,17 @@ describe("Prematch Core test", function () {
       time = await getBlockTime(ethers);
       await createGame(lp, oracle, ++gameId, time + ONE_HOUR);
 
-      await createCondition(core, oracle, gameId, ++condId, [pool2, pool1], OUTCOMES, reinforcement, marginality);
+      await createCondition(
+        core,
+        oracle,
+        gameId,
+        ++condId,
+        [pool2, pool1],
+        OUTCOMES,
+        reinforcement,
+        marginality,
+        false
+      );
 
       const betAmount = tokens(100);
       let { tokenId } = await makeBetGetTokenIdOdds(
@@ -1816,7 +2038,17 @@ describe("Prematch Core test", function () {
       time = await getBlockTime(ethers);
       await createGame(lp, oracle, ++gameId, time + ONE_HOUR);
 
-      await createCondition(core, oracle, gameId, ++condId, [pool2, pool1], OUTCOMES, reinforcement, marginality);
+      await createCondition(
+        core,
+        oracle,
+        gameId,
+        ++condId,
+        [pool2, pool1],
+        OUTCOMES,
+        reinforcement,
+        marginality,
+        false
+      );
 
       const betAmount = tokens(100);
       let { tokenId, odds } = await makeBetGetTokenIdOdds(
@@ -1847,7 +2079,17 @@ describe("Prematch Core test", function () {
       time = await getBlockTime(ethers);
       await createGame(lp, oracle, ++gameId, time + ONE_HOUR);
 
-      await createCondition(core, oracle, gameId, ++condId, [pool2, pool1], OUTCOMES, reinforcement, marginality);
+      await createCondition(
+        core,
+        oracle,
+        gameId,
+        ++condId,
+        [pool2, pool1],
+        OUTCOMES,
+        reinforcement,
+        marginality,
+        false
+      );
 
       const bettorBal = await wxDAI.balanceOf(bettor.address);
       const betAmount = tokens(100);
@@ -1874,7 +2116,17 @@ describe("Prematch Core test", function () {
       time = await getBlockTime(ethers);
       await createGame(lp, oracle, ++gameId, time + ONE_HOUR);
 
-      await createCondition(core, oracle, gameId, ++condId, [pool2, pool1], OUTCOMES, reinforcement, marginality);
+      await createCondition(
+        core,
+        oracle,
+        gameId,
+        ++condId,
+        [pool2, pool1],
+        OUTCOMES,
+        reinforcement,
+        marginality,
+        false
+      );
 
       const minBetAmount = tokens(10);
       await changeMinBet(lp, core, poolOwner, minBetAmount);
@@ -1905,9 +2157,9 @@ describe("Prematch Core test", function () {
   });
 
   describe("Reward oracle", function () {
-    let factoryOwner, poolOwner, dataProvider, bettor, lpOwner, affiliate, oracle, oracle2, maintainer;
+    let factoryOwner, poolOwner, dataProvider, bettor, affiliate, oracle, oracle2, maintainer;
     let access, core, wxDAI, lp;
-    let lpNFT, time, condId2;
+    let time, condId2;
 
     let gameId = 0;
     let condId = 0;
@@ -1918,6 +2170,7 @@ describe("Prematch Core test", function () {
     const minDepo = tokens(10);
     const daoFee = MULTIPLIER * 0.09; // 9%
     const dataProviderFee = MULTIPLIER * 0.01; // 1%
+    const affiliateFee = MULTIPLIER * 0.6; // 60%
 
     const pool1 = 5000000;
     const pool2 = 5000000;
@@ -1926,7 +2179,7 @@ describe("Prematch Core test", function () {
     const betAmount2 = tokens(50);
 
     beforeEach(async () => {
-      [factoryOwner, poolOwner, dataProvider, bettor, lpOwner, affiliate, oracle, oracle2, maintainer] =
+      [factoryOwner, poolOwner, dataProvider, bettor, affiliate, oracle, oracle2, maintainer] =
         await ethers.getSigners();
 
       ({ access, core, wxDAI, lp, azuroBet, roleIds } = await prepareStand(
@@ -1934,10 +2187,12 @@ describe("Prematch Core test", function () {
         factoryOwner,
         poolOwner,
         dataProvider,
+        affiliate,
         bettor,
         minDepo,
         daoFee,
         dataProviderFee,
+        affiliateFee,
         LIQUIDITY
       ));
       await prepareAccess(access, poolOwner, oracle.address, oracle2.address, maintainer.address, roleIds);
@@ -1948,9 +2203,29 @@ describe("Prematch Core test", function () {
       await createGame(lp, oracle, ++gameId, time + ONE_HOUR);
 
       condId2 = ++condId;
-      await createCondition(core, oracle2, gameId, condId2, [pool2, pool1], OUTCOMES, reinforcement, marginality);
+      await createCondition(
+        core,
+        oracle2,
+        gameId,
+        condId2,
+        [pool2, pool1],
+        OUTCOMES,
+        reinforcement,
+        marginality,
+        false
+      );
 
-      await createCondition(core, oracle, gameId, ++condId, [pool2, pool1], OUTCOMES, reinforcement, marginality);
+      await createCondition(
+        core,
+        oracle,
+        gameId,
+        ++condId,
+        [pool2, pool1],
+        OUTCOMES,
+        reinforcement,
+        marginality,
+        false
+      );
 
       await makeBetGetTokenId(lp, core, poolOwner, affiliate.address, condId, tokens(100), OUTCOMELOSE, time + 100, 0);
       await makeBetGetTokenId(lp, core, poolOwner, affiliate.address, condId2, tokens(100), OUTCOMELOSE, time + 100, 0);
@@ -2021,7 +2296,17 @@ describe("Prematch Core test", function () {
       await createGame(lp, oracle, ++gameId, time + ONE_MINUTE);
 
       condId++;
-      await createCondition(core, oracle, gameId, ++condId, [pool2, pool1], OUTCOMES, reinforcement, marginality);
+      await createCondition(
+        core,
+        oracle,
+        gameId,
+        ++condId,
+        [pool2, pool1],
+        OUTCOMES,
+        reinforcement,
+        marginality,
+        false
+      );
       await makeBetGetTokenId(lp, core, poolOwner, affiliate.address, condId, tokens(100), OUTCOMELOSE, time + 100, 0);
 
       timeShift(time + 2 * ONE_MINUTE);
@@ -2041,14 +2326,15 @@ describe("Prematch Core test", function () {
     });
     it("Oracle creates a profitable condition and data provider gets reward", async () => {
       const lpReserve = await lp.getReserve();
-      const dataProviderBal = await wxDAI.balanceOf(dataProvider.address);
       const daoBal = await wxDAI.balanceOf(factoryOwner.address);
+      const dataProviderBal = await wxDAI.balanceOf(dataProvider.address);
+      const affiliateBal = await wxDAI.balanceOf(affiliate.address);
 
       time = await getBlockTime(ethers);
       await createGame(lp, oracle, ++gameId, time + ONE_HOUR);
 
       condId++;
-      await createCondition(core, oracle, gameId, condId, [pool2, pool1], OUTCOMES, reinforcement, marginality);
+      await createCondition(core, oracle, gameId, condId, [pool2, pool1], OUTCOMES, reinforcement, marginality, false);
 
       await makeBetGetTokenId(lp, core, bettor, affiliate.address, condId, betAmount, OUTCOMELOSE, time + 100, 0);
 
@@ -2064,19 +2350,26 @@ describe("Prematch Core test", function () {
       const dataProviderReward = betAmount.mul(dataProviderFee).div(MULTIPLIER);
       expect(await wxDAI.balanceOf(dataProvider.address)).to.be.equal(dataProviderBal.add(dataProviderReward));
 
-      expect(await lp.getReserve()).to.be.equal(lpReserve.add(betAmount).sub(daoReward.add(dataProviderReward)));
+      await lp.connect(affiliate).claimReward();
+      const affiliateReward = betAmount.mul(affiliateFee).div(MULTIPLIER);
+      expect(await wxDAI.balanceOf(affiliate.address)).to.be.equal(affiliateBal.add(affiliateReward));
+
+      expect(await lp.getReserve()).to.be.equal(
+        lpReserve.add(betAmount).sub(daoReward.add(dataProviderReward).add(affiliateReward))
+      );
     });
     it("Oracle creates a condition with extremely small profit and data provider gets no reward", async () => {
       const lpReserve = await lp.getReserve();
-      const dataProviderBal = await wxDAI.balanceOf(dataProvider.address);
       const daoBal = await wxDAI.balanceOf(factoryOwner.address);
+      const dataProviderBal = await wxDAI.balanceOf(dataProvider.address);
+      const affiliateBal = await wxDAI.balanceOf(affiliate.address);
       const betAmount = 1;
 
       time = await getBlockTime(ethers);
       await createGame(lp, oracle, ++gameId, time + ONE_HOUR);
 
       condId++;
-      await createCondition(core, oracle, gameId, condId, [pool2, pool1], OUTCOMES, reinforcement, marginality);
+      await createCondition(core, oracle, gameId, condId, [pool2, pool1], OUTCOMES, reinforcement, marginality, false);
 
       await makeBetGetTokenId(lp, core, bettor, affiliate.address, condId, betAmount, OUTCOMELOSE, time + 100, 0);
 
@@ -2090,6 +2383,9 @@ describe("Prematch Core test", function () {
       await lp.connect(dataProvider).claimReward();
       expect(await wxDAI.balanceOf(dataProvider.address)).to.be.equal(dataProviderBal);
 
+      await lp.connect(affiliate).claimReward();
+      expect(await wxDAI.balanceOf(affiliate.address)).to.be.equal(affiliateBal);
+
       expect(await lp.getReserve()).to.be.equal(lpReserve.add(betAmount));
     });
     it("Oracle creates a lose-making condition and gets no reward", async () => {
@@ -2100,7 +2396,7 @@ describe("Prematch Core test", function () {
       await createGame(lp, oracle, ++gameId, time + ONE_HOUR);
 
       condId++;
-      await createCondition(core, oracle, gameId, condId, [pool2, pool1], OUTCOMES, reinforcement, marginality);
+      await createCondition(core, oracle, gameId, condId, [pool2, pool1], OUTCOMES, reinforcement, marginality, false);
 
       await makeBetGetTokenId(lp, core, bettor, affiliate.address, condId, betAmount, [OUTCOMEWIN], time + 100, 0);
 
@@ -2118,17 +2414,38 @@ describe("Prematch Core test", function () {
       let lpReserve = await lp.getReserve();
       const daoBal = await wxDAI.balanceOf(factoryOwner.address);
       const dataProviderBal = await wxDAI.balanceOf(dataProvider.address);
+      const affiliateBal = await wxDAI.balanceOf(affiliate.address);
 
       time = await getBlockTime(ethers);
       await createGame(lp, oracle, ++gameId, time + ONE_HOUR);
 
       const profitCondId = ++condId;
-      await createCondition(core, oracle, gameId, profitCondId, [pool2, pool1], OUTCOMES, reinforcement, marginality);
+      await createCondition(
+        core,
+        oracle,
+        gameId,
+        profitCondId,
+        [pool2, pool1],
+        OUTCOMES,
+        reinforcement,
+        marginality,
+        false
+      );
 
       await makeBetGetTokenId(lp, core, bettor, affiliate.address, condId, betAmount, OUTCOMELOSE, time + 100, 0);
 
       const lossCondId = ++condId;
-      await createCondition(core, oracle, gameId, lossCondId, [pool2, pool1], OUTCOMES, reinforcement, marginality);
+      await createCondition(
+        core,
+        oracle,
+        gameId,
+        lossCondId,
+        [pool2, pool1],
+        OUTCOMES,
+        reinforcement,
+        marginality,
+        false
+      );
 
       const { odds } = await makeBetGetTokenIdOdds(
         lp,
@@ -2148,15 +2465,21 @@ describe("Prematch Core test", function () {
 
       const daoReward = betAmount.mul(daoFee).div(MULTIPLIER);
       const dataProviderReward = betAmount.mul(dataProviderFee).div(MULTIPLIER);
+      const affiliateReward = betAmount.mul(affiliateFee).div(MULTIPLIER);
       const lpReserveAfter = await lp.getReserve();
-      expect(lpReserveAfter).to.be.equal(lpReserve.add(betAmount).sub(daoReward.add(dataProviderReward)));
+      expect(lpReserveAfter).to.be.equal(
+        lpReserve.add(betAmount).sub(daoReward.add(dataProviderReward).add(affiliateReward))
+      );
 
       await core.connect(oracle).resolveCondition(lossCondId, [OUTCOMEWIN]);
 
       const loss = betAmount2.mul(odds).div(MULTIPLIER).sub(betAmount2);
       const daoLoss = loss.mul(daoFee).div(MULTIPLIER);
       const dataProviderLoss = loss.mul(dataProviderFee).div(MULTIPLIER);
-      expect(await lp.getReserve()).to.be.equal(lpReserveAfter.sub(loss.sub(daoLoss.add(dataProviderLoss))));
+      const affiliateLoss = loss.mul(affiliateFee).div(MULTIPLIER);
+      expect(await lp.getReserve()).to.be.equal(
+        lpReserveAfter.sub(loss.sub(daoLoss.add(dataProviderLoss).add(affiliateLoss)))
+      );
 
       await lp.connect(factoryOwner).claimReward();
       expect(await wxDAI.balanceOf(factoryOwner.address)).to.be.equal(daoBal.add(daoReward).sub(daoLoss));
@@ -2165,17 +2488,33 @@ describe("Prematch Core test", function () {
       expect(await wxDAI.balanceOf(dataProvider.address)).to.be.equal(
         dataProviderBal.add(dataProviderReward).sub(dataProviderLoss)
       );
+
+      await lp.connect(affiliate).claimReward();
+      expect(await wxDAI.balanceOf(affiliate.address)).to.be.equal(
+        affiliateBal.add(affiliateReward).sub(affiliateLoss)
+      );
     });
     it("Oracle creates a profitable condition after a lose-making one and data provider gets reward", async () => {
       let lpReserve = await lp.getReserve();
       const daoBal = await wxDAI.balanceOf(factoryOwner.address);
       const dataProviderBal = await wxDAI.balanceOf(dataProvider.address);
+      const affiliateBal = await wxDAI.balanceOf(affiliate.address);
 
       time = await getBlockTime(ethers);
       await createGame(lp, oracle, ++gameId, time + ONE_HOUR);
 
       const lossCondId = ++condId;
-      await createCondition(core, oracle, gameId, lossCondId, [pool2, pool1], OUTCOMES, reinforcement, marginality);
+      await createCondition(
+        core,
+        oracle,
+        gameId,
+        lossCondId,
+        [pool2, pool1],
+        OUTCOMES,
+        reinforcement,
+        marginality,
+        false
+      );
 
       const { odds } = await makeBetGetTokenIdOdds(
         lp,
@@ -2190,7 +2529,17 @@ describe("Prematch Core test", function () {
       );
 
       const profitCondId = ++condId;
-      await createCondition(core, oracle, gameId, profitCondId, [pool2, pool1], OUTCOMES, reinforcement, marginality);
+      await createCondition(
+        core,
+        oracle,
+        gameId,
+        profitCondId,
+        [pool2, pool1],
+        OUTCOMES,
+        reinforcement,
+        marginality,
+        false
+      );
 
       await makeBetGetTokenId(lp, core, bettor, affiliate.address, profitCondId, betAmount, OUTCOMELOSE, time + 100, 0);
 
@@ -2201,6 +2550,7 @@ describe("Prematch Core test", function () {
       const loss = betAmount2.mul(odds).div(MULTIPLIER).sub(betAmount2);
       const daoLoss = loss.mul(daoFee).div(MULTIPLIER);
       const dataProviderLoss = loss.mul(dataProviderFee).div(MULTIPLIER);
+      const affiliateLoss = loss.mul(affiliateFee).div(MULTIPLIER);
       const lpReserveAfter = await lp.getReserve();
       expect(lpReserveAfter).to.be.equal(lpReserve.sub(loss));
 
@@ -2208,8 +2558,13 @@ describe("Prematch Core test", function () {
 
       const daoReward = betAmount.mul(daoFee).div(MULTIPLIER);
       const dataProviderReward = betAmount.mul(dataProviderFee).div(MULTIPLIER);
+      const affiliateReward = betAmount.mul(affiliateFee).div(MULTIPLIER);
       expect(await lp.getReserve()).to.be.equal(
-        lpReserveAfter.add(betAmount).sub(daoReward.add(dataProviderReward).sub(daoLoss).sub(dataProviderLoss))
+        lpReserveAfter
+          .add(betAmount)
+          .sub(
+            daoReward.add(dataProviderReward).add(affiliateReward).sub(daoLoss).sub(dataProviderLoss).sub(affiliateLoss)
+          )
       );
 
       await lp.connect(factoryOwner).claimReward();
@@ -2219,33 +2574,44 @@ describe("Prematch Core test", function () {
       expect(await wxDAI.balanceOf(dataProvider.address)).to.be.equal(
         dataProviderBal.add(dataProviderReward).sub(dataProviderLoss)
       );
+
+      await lp.connect(affiliate).claimReward();
+      expect(await wxDAI.balanceOf(affiliate.address)).to.be.equal(
+        affiliateBal.add(affiliateReward).sub(affiliateLoss)
+      );
     });
     it("Change fee %, create conditions by different oracles and get data provider reward", async () => {
       lp.connect(poolOwner).changeFee(0, FEE5PERCENT); // set DAO fee to 5%
       lp.connect(poolOwner).changeFee(1, FEEHALFPERCENT); // set data provider fee to 0.5%
+      lp.connect(poolOwner).changeFee(2, FEE5PERCENT); // set affiliate fee to 5%
 
       let dataProviderBal = await wxDAI.balanceOf(dataProvider.address);
       let daoBal = await wxDAI.balanceOf(factoryOwner.address);
+      let affiliateBal = await wxDAI.balanceOf(affiliate.address);
 
       await core.connect(oracle).resolveCondition(condId, [OUTCOMEWIN]);
       await core.connect(oracle2).resolveCondition(condId2, [OUTCOMEWIN]);
 
+      await lp.connect(factoryOwner).claimReward();
+      expect(await wxDAI.balanceOf(factoryOwner.address)).to.be.equal(daoBal.add(tokens(10))); // + 5% of 200 tokens
+
       await lp.connect(dataProvider).claimReward();
-      expect(await wxDAI.balanceOf(dataProvider.address)).to.be.equal(dataProviderBal.add(tokens(1))); // + 1% of 200 tokens
+      expect(await wxDAI.balanceOf(dataProvider.address)).to.be.equal(dataProviderBal.add(tokens(1))); // + 0.5% of 200 tokens
 
       await lp.connect(factoryOwner).claimReward();
-      expect(await wxDAI.balanceOf(factoryOwner.address)).to.be.equal(daoBal.add(tokens(10))); // + 9% of 200 tokens
+      expect(await wxDAI.balanceOf(factoryOwner.address)).to.be.equal(affiliateBal.add(tokens(10))); // + 5% of 200 tokens
     });
     it("Oracle creates a profitable condition and data provider gets reward", async () => {
       const lpReserve = await lp.getReserve();
       const daoBal = await wxDAI.balanceOf(factoryOwner.address);
       const dataProviderBal = await wxDAI.balanceOf(dataProvider.address);
+      const affiliateBal = await wxDAI.balanceOf(dataProvider.address);
 
       time = await getBlockTime(ethers);
       await createGame(lp, oracle, ++gameId, time + ONE_HOUR);
 
       condId++;
-      await createCondition(core, oracle, gameId, condId, [pool2, pool1], OUTCOMES, reinforcement, marginality);
+      await createCondition(core, oracle, gameId, condId, [pool2, pool1], OUTCOMES, reinforcement, marginality, false);
 
       await makeBetGetTokenId(lp, core, bettor, affiliate.address, condId, betAmount, OUTCOMELOSE, time + 100, 0);
 
@@ -2261,23 +2627,50 @@ describe("Prematch Core test", function () {
       const dataProviderReward = betAmount.mul(dataProviderFee).div(MULTIPLIER);
       expect(await wxDAI.balanceOf(dataProvider.address)).to.be.equal(dataProviderBal.add(dataProviderReward));
 
-      expect(await lp.getReserve()).to.be.equal(lpReserve.add(betAmount).sub(daoReward.add(dataProviderReward)));
+      await lp.connect(affiliate).claimReward();
+      const affiliateReward = betAmount.mul(affiliateFee).div(MULTIPLIER);
+      expect(await wxDAI.balanceOf(affiliate.address)).to.be.equal(affiliateBal.add(affiliateReward));
+
+      expect(await lp.getReserve()).to.be.equal(
+        lpReserve.add(betAmount).sub(daoReward.add(dataProviderReward).add(affiliateReward))
+      );
     });
     it("Oracle creates a lose-making condition after a profitable one and data provider gets reward", async () => {
       let lpReserve = await lp.getReserve();
       const daoBal = await wxDAI.balanceOf(factoryOwner.address);
       const dataProviderBal = await wxDAI.balanceOf(dataProvider.address);
+      const affiliateBal = await wxDAI.balanceOf(affiliate.address);
 
       time = await getBlockTime(ethers);
       await createGame(lp, oracle, ++gameId, time + ONE_HOUR);
 
       const profitCondId = ++condId;
-      await createCondition(core, oracle, gameId, profitCondId, [pool2, pool1], OUTCOMES, reinforcement, marginality);
+      await createCondition(
+        core,
+        oracle,
+        gameId,
+        profitCondId,
+        [pool2, pool1],
+        OUTCOMES,
+        reinforcement,
+        marginality,
+        false
+      );
 
       await makeBetGetTokenId(lp, core, bettor, affiliate.address, profitCondId, betAmount, OUTCOMELOSE, time + 100, 0);
 
       const lossCondId = ++condId;
-      await createCondition(core, oracle, gameId, lossCondId, [pool2, pool1], OUTCOMES, reinforcement, marginality);
+      await createCondition(
+        core,
+        oracle,
+        gameId,
+        lossCondId,
+        [pool2, pool1],
+        OUTCOMES,
+        reinforcement,
+        marginality,
+        false
+      );
 
       const { odds } = await makeBetGetTokenIdOdds(
         lp,
@@ -2297,15 +2690,21 @@ describe("Prematch Core test", function () {
 
       const daoReward = betAmount.mul(daoFee).div(MULTIPLIER);
       const dataProviderReward = betAmount.mul(dataProviderFee).div(MULTIPLIER);
+      const affiliateReward = betAmount.mul(affiliateFee).div(MULTIPLIER);
       const lpReserveAfter = await lp.getReserve();
-      expect(lpReserveAfter).to.be.equal(lpReserve.add(betAmount).sub(daoReward.add(dataProviderReward)));
+      expect(lpReserveAfter).to.be.equal(
+        lpReserve.add(betAmount).sub(daoReward.add(dataProviderReward).add(affiliateReward))
+      );
 
       await core.connect(oracle).resolveCondition(lossCondId, [OUTCOMEWIN]);
 
       const loss = betAmount2.mul(odds).div(MULTIPLIER).sub(betAmount2);
       const daoLoss = loss.mul(daoFee).div(MULTIPLIER);
       const dataProviderLoss = loss.mul(dataProviderFee).div(MULTIPLIER);
-      expect(await lp.getReserve()).to.be.equal(lpReserveAfter.sub(loss.sub(daoLoss.add(dataProviderLoss))));
+      const affiliateLoss = loss.mul(affiliateFee).div(MULTIPLIER);
+      expect(await lp.getReserve()).to.be.equal(
+        lpReserveAfter.sub(loss.sub(daoLoss.add(dataProviderLoss).add(affiliateLoss)))
+      );
 
       await lp.connect(factoryOwner).claimReward();
       expect(await wxDAI.balanceOf(factoryOwner.address)).to.be.equal(daoBal.add(daoReward).sub(daoLoss));
@@ -2314,17 +2713,33 @@ describe("Prematch Core test", function () {
       expect(await wxDAI.balanceOf(dataProvider.address)).to.be.equal(
         dataProviderBal.add(dataProviderReward).sub(dataProviderLoss)
       );
+
+      await lp.connect(affiliate).claimReward();
+      expect(await wxDAI.balanceOf(affiliate.address)).to.be.equal(
+        affiliateBal.add(affiliateReward).sub(affiliateLoss)
+      );
     });
     it("Oracle creates a profitable condition after a lose-making one and data provider gets reward", async () => {
       let lpReserve = await lp.getReserve();
       const daoBal = await wxDAI.balanceOf(factoryOwner.address);
       const dataProviderBal = await wxDAI.balanceOf(dataProvider.address);
+      const affiliateBal = await wxDAI.balanceOf(affiliate.address);
 
       time = await getBlockTime(ethers);
       await createGame(lp, oracle, ++gameId, time + ONE_HOUR);
 
       const profitCondId = ++condId;
-      await createCondition(core, oracle, gameId, profitCondId, [pool2, pool1], OUTCOMES, reinforcement, marginality);
+      await createCondition(
+        core,
+        oracle,
+        gameId,
+        profitCondId,
+        [pool2, pool1],
+        OUTCOMES,
+        reinforcement,
+        marginality,
+        false
+      );
 
       const { odds } = await makeBetGetTokenIdOdds(
         lp,
@@ -2339,7 +2754,17 @@ describe("Prematch Core test", function () {
       );
 
       const lossCondId = ++condId;
-      await createCondition(core, oracle, gameId, lossCondId, [pool2, pool1], OUTCOMES, reinforcement, marginality);
+      await createCondition(
+        core,
+        oracle,
+        gameId,
+        lossCondId,
+        [pool2, pool1],
+        OUTCOMES,
+        reinforcement,
+        marginality,
+        false
+      );
 
       await makeBetGetTokenId(lp, core, bettor, affiliate.address, lossCondId, betAmount, OUTCOMELOSE, time + 100, 0);
 
@@ -2350,6 +2775,7 @@ describe("Prematch Core test", function () {
       const loss = betAmount2.mul(odds).div(MULTIPLIER).sub(betAmount2);
       const daoLoss = loss.mul(daoFee).div(MULTIPLIER);
       const dataProviderLoss = loss.mul(dataProviderFee).div(MULTIPLIER);
+      const affiliateLoss = loss.mul(affiliateFee).div(MULTIPLIER);
       const lpReserveAfter = await lp.getReserve();
       expect(lpReserveAfter).to.be.equal(lpReserve.sub(loss));
 
@@ -2357,8 +2783,13 @@ describe("Prematch Core test", function () {
 
       const daoReward = betAmount.mul(daoFee).div(MULTIPLIER);
       const dataProviderReward = betAmount.mul(dataProviderFee).div(MULTIPLIER);
+      const affiliateReward = betAmount.mul(affiliateFee).div(MULTIPLIER);
       expect(await lp.getReserve()).to.be.equal(
-        lpReserveAfter.add(betAmount).sub(daoReward.add(dataProviderReward).sub(daoLoss).sub(dataProviderLoss))
+        lpReserveAfter
+          .add(betAmount)
+          .sub(
+            daoReward.add(dataProviderReward).add(affiliateReward).sub(daoLoss).sub(dataProviderLoss).sub(affiliateLoss)
+          )
       );
 
       await lp.connect(factoryOwner).claimReward();
@@ -2368,18 +2799,24 @@ describe("Prematch Core test", function () {
       expect(await wxDAI.balanceOf(dataProvider.address)).to.be.equal(
         dataProviderBal.add(dataProviderReward).sub(dataProviderLoss)
       );
+
+      await lp.connect(affiliate).claimReward();
+      expect(await wxDAI.balanceOf(affiliate.address)).to.be.equal(
+        affiliateBal.add(affiliateReward).sub(affiliateLoss)
+      );
     });
     it("Oracle creates a profitable condition and DAO gets reward as data provider", async () => {
       await lp.connect(poolOwner).changeDataProvider(factoryOwner.address);
 
       const lpReserve = await lp.getReserve();
       const daoBal = await wxDAI.balanceOf(factoryOwner.address);
+      const affiliateBal = await wxDAI.balanceOf(affiliate.address);
 
       time = await getBlockTime(ethers);
       await createGame(lp, oracle, ++gameId, time + ONE_HOUR);
 
       condId++;
-      await createCondition(core, oracle, gameId, condId, [pool2, pool1], OUTCOMES, reinforcement, marginality);
+      await createCondition(core, oracle, gameId, condId, [pool2, pool1], OUTCOMES, reinforcement, marginality, false);
 
       await makeBetGetTokenId(lp, core, bettor, affiliate.address, condId, betAmount, OUTCOMELOSE, time + 100, 0);
 
@@ -2391,7 +2828,11 @@ describe("Prematch Core test", function () {
       const daoReward = betAmount.mul(daoFee + dataProviderFee).div(MULTIPLIER);
       expect(await wxDAI.balanceOf(factoryOwner.address)).to.be.equal(daoBal.add(daoReward));
 
-      expect(await lp.getReserve()).to.be.equal(lpReserve.add(betAmount).sub(daoReward));
+      await lp.connect(affiliate).claimReward();
+      const affiliateReward = betAmount.mul(affiliateFee).div(MULTIPLIER);
+      expect(await wxDAI.balanceOf(affiliate.address)).to.be.equal(affiliateBal.add(affiliateReward));
+
+      expect(await lp.getReserve()).to.be.equal(lpReserve.add(betAmount).sub(daoReward).sub(affiliateReward));
     });
     it("Oracle creates a lose-making condition and DAO gets no reward", async () => {
       const daoBal = await wxDAI.balanceOf(factoryOwner.address);
@@ -2401,7 +2842,7 @@ describe("Prematch Core test", function () {
       await createGame(lp, oracle, ++gameId, time + ONE_HOUR);
 
       condId++;
-      await createCondition(core, oracle, gameId, condId, [pool2, pool1], OUTCOMES, reinforcement, marginality);
+      await createCondition(core, oracle, gameId, condId, [pool2, pool1], OUTCOMES, reinforcement, marginality, false);
 
       await makeBetGetTokenId(lp, core, bettor, affiliate.address, condId, betAmount, [OUTCOMEWIN], time + 100, 0);
 
@@ -2417,17 +2858,38 @@ describe("Prematch Core test", function () {
 
       let lpReserve = await lp.getReserve();
       const daoBal = await wxDAI.balanceOf(factoryOwner.address);
+      const affiliateBal = await wxDAI.balanceOf(affiliate.address);
 
       time = await getBlockTime(ethers);
       await createGame(lp, oracle, ++gameId, time + ONE_HOUR);
 
       const lossCondId = ++condId;
-      await createCondition(core, oracle, gameId, lossCondId, [pool2, pool1], OUTCOMES, reinforcement, marginality);
+      await createCondition(
+        core,
+        oracle,
+        gameId,
+        lossCondId,
+        [pool2, pool1],
+        OUTCOMES,
+        reinforcement,
+        marginality,
+        false
+      );
 
       await makeBetGetTokenId(lp, core, bettor, affiliate.address, lossCondId, betAmount, OUTCOMELOSE, time + 100, 0);
 
       const profitCondId = ++condId;
-      await createCondition(core, oracle, gameId, profitCondId, [pool2, pool1], OUTCOMES, reinforcement, marginality);
+      await createCondition(
+        core,
+        oracle,
+        gameId,
+        profitCondId,
+        [pool2, pool1],
+        OUTCOMES,
+        reinforcement,
+        marginality,
+        false
+      );
 
       const { odds } = await makeBetGetTokenIdOdds(
         lp,
@@ -2446,29 +2908,47 @@ describe("Prematch Core test", function () {
       await core.connect(oracle).resolveCondition(lossCondId, [OUTCOMEWIN]);
 
       const daoReward = betAmount.mul(daoFee + dataProviderFee).div(MULTIPLIER);
+      const affiliateReward = betAmount.mul(affiliateFee).div(MULTIPLIER);
       const lpReserveAfter = await lp.getReserve();
-      expect(lpReserveAfter).to.be.equal(lpReserve.add(betAmount).sub(daoReward));
+      expect(lpReserveAfter).to.be.equal(lpReserve.add(betAmount).sub(daoReward).sub(affiliateReward));
 
       await core.connect(oracle).resolveCondition(profitCondId, [OUTCOMEWIN]);
 
       const loss = betAmount2.mul(odds).div(MULTIPLIER).sub(betAmount2);
       const daoLoss = loss.mul(daoFee + dataProviderFee).div(MULTIPLIER);
-      expect(await lp.getReserve()).to.be.equal(lpReserveAfter.sub(loss.sub(daoLoss)));
+      const affiliateLoss = loss.mul(affiliateFee).div(MULTIPLIER);
+      expect(await lp.getReserve()).to.be.equal(lpReserveAfter.sub(loss.sub(daoLoss).sub(affiliateLoss)));
 
       await lp.connect(factoryOwner).claimReward();
       expect(await wxDAI.balanceOf(factoryOwner.address)).to.be.equal(daoBal.add(daoReward).sub(daoLoss));
+
+      await lp.connect(affiliate).claimReward();
+      expect(await wxDAI.balanceOf(affiliate.address)).to.be.equal(
+        affiliateBal.add(affiliateReward).sub(affiliateLoss)
+      );
     });
     it("Oracle creates a profitable condition after a lose-making one and DAO gets reward as data provider", async () => {
       await lp.connect(poolOwner).changeDataProvider(factoryOwner.address);
 
       let lpReserve = await lp.getReserve();
       const daoBal = await wxDAI.balanceOf(factoryOwner.address);
+      const affiliateBal = await wxDAI.balanceOf(affiliate.address);
 
       time = await getBlockTime(ethers);
       await createGame(lp, oracle, ++gameId, time + ONE_HOUR);
 
       const lossCondId = ++condId;
-      await createCondition(core, oracle, gameId, lossCondId, [pool2, pool1], OUTCOMES, reinforcement, marginality);
+      await createCondition(
+        core,
+        oracle,
+        gameId,
+        lossCondId,
+        [pool2, pool1],
+        OUTCOMES,
+        reinforcement,
+        marginality,
+        false
+      );
 
       const { odds } = await makeBetGetTokenIdOdds(
         lp,
@@ -2483,7 +2963,17 @@ describe("Prematch Core test", function () {
       );
 
       const profitCondId = ++condId;
-      await createCondition(core, oracle, gameId, profitCondId, [pool2, pool1], OUTCOMES, reinforcement, marginality);
+      await createCondition(
+        core,
+        oracle,
+        gameId,
+        profitCondId,
+        [pool2, pool1],
+        OUTCOMES,
+        reinforcement,
+        marginality,
+        false
+      );
 
       await makeBetGetTokenId(lp, core, bettor, affiliate.address, profitCondId, betAmount, OUTCOMELOSE, time + 100, 0);
 
@@ -2493,16 +2983,25 @@ describe("Prematch Core test", function () {
 
       const loss = betAmount2.mul(odds).div(MULTIPLIER).sub(betAmount2);
       const daoLoss = loss.mul(daoFee + dataProviderFee).div(MULTIPLIER);
+      const affiliateLoss = loss.mul(affiliateFee).div(MULTIPLIER);
       const lpReserveAfter = await lp.getReserve();
       expect(lpReserveAfter).to.be.equal(lpReserve.sub(loss));
 
       await core.connect(oracle).resolveCondition(profitCondId, [OUTCOMEWIN]);
 
       const daoReward = betAmount.mul(daoFee + dataProviderFee).div(MULTIPLIER);
-      expect(await lp.getReserve()).to.be.equal(lpReserveAfter.add(betAmount).sub(daoReward.sub(daoLoss)));
+      const affiliateReward = betAmount.mul(affiliateFee).div(MULTIPLIER);
+      expect(await lp.getReserve()).to.be.equal(
+        lpReserveAfter.add(betAmount).sub(daoReward.add(affiliateReward).sub(daoLoss).sub(affiliateLoss))
+      );
 
       await lp.connect(factoryOwner).claimReward();
       expect(await wxDAI.balanceOf(factoryOwner.address)).to.be.equal(daoBal.add(daoReward).sub(daoLoss));
+
+      await lp.connect(affiliate).claimReward();
+      expect(await wxDAI.balanceOf(affiliate.address)).to.be.equal(
+        affiliateBal.add(affiliateReward).sub(affiliateLoss)
+      );
     });
   });
 });

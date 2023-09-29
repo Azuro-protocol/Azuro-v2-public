@@ -34,11 +34,10 @@ contract BetExpress is ERC721Upgradeable, OwnableUpgradeable, IBetExpress {
         _;
     }
 
-    function initialize(address lp_, address core_)
-        external
-        override
-        initializer
-    {
+    function initialize(
+        address lp_,
+        address core_
+    ) external override initializer {
         __ERC721_init("BetExpress", "EXPR");
         __Ownable_init();
 
@@ -144,12 +143,9 @@ contract BetExpress is ERC721Upgradeable, OwnableUpgradeable, IBetExpress {
      * @return account winning account.
      * @return payout amount of winnings.
      */
-    function resolvePayout(uint256 tokenId)
-        external
-        override
-        onlyLp
-        returns (address account, uint128 payout)
-    {
+    function resolvePayout(
+        uint256 tokenId
+    ) external override onlyLp returns (address account, uint128 payout) {
         Bet storage bet = _bets[tokenId];
 
         account = ownerOf(tokenId);
@@ -174,7 +170,10 @@ contract BetExpress is ERC721Upgradeable, OwnableUpgradeable, IBetExpress {
      * @return conditionOdds The betting odds for each sub-bet.
      * @return expressOdds The resulting betting odds.
      */
-    function calcOdds(ICoreBase.CoreBetData[] calldata subBets, uint128 amount)
+    function calcOdds(
+        ICoreBase.CoreBetData[] calldata subBets,
+        uint128 amount
+    )
         external
         view
         returns (uint64[] memory conditionOdds, uint256 expressOdds)
@@ -206,13 +205,9 @@ contract BetExpress is ERC721Upgradeable, OwnableUpgradeable, IBetExpress {
      * @param  tokenId The express bet token ID.
      * @return The pending payout of the bet owner.
      */
-    function viewPayout(uint256 tokenId)
-        external
-        view
-        virtual
-        override
-        returns (uint128)
-    {
+    function viewPayout(
+        uint256 tokenId
+    ) external view virtual override returns (uint128) {
         return _viewPayout(_bets[tokenId]);
     }
 
@@ -280,7 +275,10 @@ contract BetExpress is ERC721Upgradeable, OwnableUpgradeable, IBetExpress {
      * @return virtualFunds The condition virtual funds for each sub-bet.
      * @return winningOutcomesCounts The condition number of winning outcomes for each sub-bet
      */
-    function _calcOdds(ICoreBase.CoreBetData[] memory subBets, uint128 amount)
+    function _calcOdds(
+        ICoreBase.CoreBetData[] memory subBets,
+        uint128 amount
+    )
         internal
         view
         returns (
@@ -311,6 +309,8 @@ contract BetExpress is ERC721Upgradeable, OwnableUpgradeable, IBetExpress {
                 ICondition.Condition memory condition = core.getCondition(
                     subBet.conditionId
                 );
+                if (condition.isExpressForbidden)
+                    revert ConditionNotForExpress();
                 _conditionIsRunning(condition, subBet.conditionId);
                 {
                     uint256 gameId = condition.gameId;

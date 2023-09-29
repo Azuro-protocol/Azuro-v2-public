@@ -35,6 +35,7 @@ interface IBetExpress is IBet, IOwnable {
     error TooFewSubbets();
     error TooLargeReinforcement(uint256 conditionId);
     error WrongToken();
+    error ConditionNotForExpress();
 
     function initialize(address lp, address core) external;
 }

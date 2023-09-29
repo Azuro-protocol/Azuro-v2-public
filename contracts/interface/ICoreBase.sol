@@ -14,6 +14,7 @@ interface ICoreBase is ICondition, IOwnable, IBet {
         uint128 amount;
         uint128 payout;
         uint64 outcome;
+        uint64 timestamp;
         bool isPaid;
     }
 
@@ -90,19 +91,22 @@ interface ICoreBase is ICondition, IOwnable, IBet {
     /**
      * @notice Change the current condition `conditionId` odds.
      */
-    function changeOdds(uint256 conditionId, uint256[] calldata newOdds)
-        external;
+    function changeOdds(
+        uint256 conditionId,
+        uint256[] calldata newOdds
+    ) external;
 
     /**
      * @notice Change the current condition `conditionId` reinforcement.
      */
-    function changeReinforcement(uint256 conditionId, uint128 newReinforcement)
-        external;
+    function changeReinforcement(
+        uint256 conditionId,
+        uint128 newReinforcement
+    ) external;
 
-    function getCondition(uint256 conditionId)
-        external
-        view
-        returns (Condition memory);
+    function getCondition(
+        uint256 conditionId
+    ) external view returns (Condition memory);
 
     /**
      * @notice Indicate the condition `conditionId` as canceled.
@@ -126,6 +130,7 @@ interface ICoreBase is ICondition, IOwnable, IBet {
      * @param  reinforcement maximum amount of liquidity intended to condition reinforcement
      * @param  margin bookmaker commission
      * @param  winningOutcomesCount the number of winning outcomes of the Condition
+     * @param  isExpressForbidden true - not allowed to use in express bets
      */
     function createCondition(
         uint256 gameId,
@@ -134,21 +139,21 @@ interface ICoreBase is ICondition, IOwnable, IBet {
         uint64[] calldata outcomes,
         uint128 reinforcement,
         uint64 margin,
-        uint8 winningOutcomesCount
+        uint8 winningOutcomesCount,
+        bool isExpressForbidden
     ) external;
 
-    function getOutcomeIndex(uint256 conditionId, uint64 outcome)
-        external
-        view
-        returns (uint256);
+    function getOutcomeIndex(
+        uint256 conditionId,
+        uint64 outcome
+    ) external view returns (uint256);
 
-    function isOutcomeWinning(uint256 conditionId, uint64 outcome)
-        external
-        view
-        returns (bool);
+    function isOutcomeWinning(
+        uint256 conditionId,
+        uint64 outcome
+    ) external view returns (bool);
 
-    function isConditionCanceled(uint256 conditionId)
-        external
-        view
-        returns (bool);
+    function isConditionCanceled(
+        uint256 conditionId
+    ) external view returns (bool);
 }

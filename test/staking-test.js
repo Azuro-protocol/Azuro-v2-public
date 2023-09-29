@@ -76,20 +76,22 @@ describe("Staking test", function () {
   const interestRate = MULTIPLIER * 0.08; // 8%
   const stakeAmount = tokens(20);
 
-  let dao, poolOwner, dataProvider, oracle, maintainer, lpSupplier;
+  let dao, poolOwner, dataProvider, affiliate, oracle, maintainer, lpSupplier;
   let access, core, wxDAI, lp, staking;
   let roleIds, balance;
 
   async function deployAndInit() {
-    [dao, poolOwner, dataProvider, oracle, maintainer, lpSupplier] = await ethers.getSigners();
+    [dao, poolOwner, dataProvider, affiliate, oracle, maintainer, lpSupplier] = await ethers.getSigners();
 
     ({ access, core, wxDAI, lp, roleIds } = await prepareEmptyStand(
       ethers,
       dao,
       poolOwner,
       dataProvider,
+      affiliate,
       lpSupplier,
       1,
+      0,
       0,
       0
     ));
@@ -189,18 +191,17 @@ describe("Staking test", function () {
       await unstake(staking, lpSupplier, 1);
     });
     it("Stake interest CANNOT be larger than unused balance of the contract", async () => {
-      const deposit = tokens(100);
-      const interestRate = MULTIPLIER * 1000;
+      const interestRate = MULTIPLIER * 5000;
       const availableInterest = await wxDAI.balanceOf(staking.address);
       await staking.connect(poolOwner).changeInterestRate(interestRate);
 
-      await stake(staking, lpSupplier, deposit, 2 * stakingPeriod);
-      await stake(staking, lpSupplier, deposit, stakingPeriod);
+      await stake(staking, lpSupplier, stakeAmount, 2 * stakingPeriod);
+      await stake(staking, lpSupplier, stakeAmount, stakingPeriod);
 
       let time = await getBlockTime(ethers);
       await timeShift(time + stakingPeriod);
       await unstake(staking, lpSupplier, 2);
-      expect(await wxDAI.balanceOf(lpSupplier.address)).to.be.equal(balance.sub(deposit));
+      expect(await wxDAI.balanceOf(lpSupplier.address)).to.be.equal(balance.sub(stakeAmount));
 
       time = await getBlockTime(ethers);
       await timeShift(time + 2 * stakingPeriod);
@@ -244,22 +245,24 @@ describe("Staking connector test", function () {
   let condId = 0;
 
   async function deployAndInit() {
-    [dao, poolOwner, dataProvider, oracle, maintainer, lpSupplier] = await ethers.getSigners();
+    [dao, poolOwner, dataProvider, affiliate, oracle, maintainer, lpSupplier] = await ethers.getSigners();
 
     ({ access, core, wxDAI, lp, roleIds } = await prepareEmptyStand(
       ethers,
       dao,
       poolOwner,
       dataProvider,
+      affiliate,
       lpSupplier,
       1,
+      0,
       0,
       0
     ));
     await prepareAccess(access, poolOwner, oracle.address, poolOwner.address, maintainer.address, roleIds);
 
     const StakingConnector = await ethers.getContractFactory("StakingConnector", { signer: poolOwner });
-    stakingConnector = await upgrades.deployProxy(StakingConnector, [lp.address, oracle.address]);
+    stakingConnector = await upgrades.deployProxy(StakingConnector, [lp.address, oracle.address, depositRate]);
     await stakingConnector.deployed();
 
     await lp.connect(poolOwner).changeLiquidityManager(stakingConnector.address);
@@ -272,8 +275,8 @@ describe("Staking connector test", function () {
 
   context("Common use cases", function () {
     it("deposit", async () => {
-      let oracleResponse = await getOracleResponse(stakingConnector, lp, oracle, lpSupplier, deposit);
-      const lpNFT = await addLiquidity(lp, lpSupplier, deposit, oracleResponse);
+      let oracleResponse = await getOracleResponse(stakingConnector, lp, oracle, lpSupplier, stakeAmount);
+      const lpNFT = await addLiquidity(lp, lpSupplier, stakeAmount, oracleResponse);
 
       oracleResponse = await getOracleResponse(stakingConnector, lp, oracle, lpSupplier, 0);
       await expect(addLiquidity(lp, lpSupplier, 1, oracleResponse)).to.be.revertedWithCustomError(
@@ -283,7 +286,7 @@ describe("Staking connector test", function () {
       await makeWithdrawLiquidity(lp, lpSupplier, lpNFT, MULTIPLIER);
     });
     it("deposit - resolve losing condition - withdraw (50%) - deposit - withdraw (100%)", async () => {
-      let oracleResponse = await getOracleResponse(stakingConnector, lp, oracle, lpSupplier, deposit);
+      let oracleResponse = await getOracleResponse(stakingConnector, lp, oracle, lpSupplier, stakeAmount);
       const lpNFT = await addLiquidity(lp, lpSupplier, deposit, oracleResponse);
 
       let time = await getBlockTime(ethers);
@@ -296,7 +299,8 @@ describe("Staking connector test", function () {
         [pool2, pool1],
         [OUTCOMEWIN, OUTCOMELOSE],
         REINFORCEMENT,
-        MARGINALITY
+        MARGINALITY,
+        false
       );
       await makeBetGetTokenIdOdds(
         lp,
@@ -313,13 +317,13 @@ describe("Staking connector test", function () {
       await core.connect(oracle).resolveCondition(condId, [OUTCOMEWIN]);
       await makeWithdrawLiquidity(lp, lpSupplier, lpNFT, MULTIPLIER / 2);
 
-      oracleResponse = await getOracleResponse(stakingConnector, lp, oracle, lpSupplier, deposit);
+      oracleResponse = await getOracleResponse(stakingConnector, lp, oracle, lpSupplier, stakeAmount);
       await expect(
         addLiquidity(lp, lpSupplier, deposit.sub(await lp.nodeWithdrawView(lpNFT)).add(1), oracleResponse)
       ).to.be.revertedWithCustomError(stakingConnector, "InsufficientDepositLimit");
       const lpNFT2 = await addLiquidity(lp, lpSupplier, deposit.sub(await lp.nodeWithdrawView(lpNFT)), oracleResponse);
 
-      oracleResponse = await getOracleResponse(stakingConnector, lp, oracle, lpSupplier, deposit);
+      oracleResponse = await getOracleResponse(stakingConnector, lp, oracle, lpSupplier, stakeAmount);
       await expect(addLiquidity(lp, lpSupplier, 1, oracleResponse)).to.be.revertedWithCustomError(
         stakingConnector,
         "InsufficientDepositLimit"
@@ -329,7 +333,7 @@ describe("Staking connector test", function () {
       await makeWithdrawLiquidity(lp, lpSupplier, lpNFT2, MULTIPLIER);
     });
     it("stake (1 year) - deposit - resolve profitable condition - withdraw (50%) - deposit - withdraw (100%) - unstake", async () => {
-      let oracleResponse = await getOracleResponse(stakingConnector, lp, oracle, lpSupplier, deposit);
+      let oracleResponse = await getOracleResponse(stakingConnector, lp, oracle, lpSupplier, stakeAmount);
       const lpNFT = await addLiquidity(lp, lpSupplier, deposit, oracleResponse);
 
       let time = await getBlockTime(ethers);
@@ -342,7 +346,8 @@ describe("Staking connector test", function () {
         [pool2, pool1],
         [OUTCOMEWIN, OUTCOMELOSE],
         REINFORCEMENT,
-        MARGINALITY
+        MARGINALITY,
+        false
       );
       await makeBetGetTokenId(
         lp,
@@ -360,13 +365,13 @@ describe("Staking connector test", function () {
       await core.connect(oracle).resolveCondition(condId, [OUTCOMEWIN]);
       await makeWithdrawLiquidity(lp, lpSupplier, lpNFT, MULTIPLIER / 2);
 
-      oracleResponse = await getOracleResponse(stakingConnector, lp, oracle, lpSupplier, deposit);
+      oracleResponse = await getOracleResponse(stakingConnector, lp, oracle, lpSupplier, stakeAmount);
       await expect(
         addLiquidity(lp, lpSupplier, deposit.sub(await lp.nodeWithdrawView(lpNFT)).add(1), oracleResponse)
       ).to.be.revertedWithCustomError(stakingConnector, "InsufficientDepositLimit");
       const lpNFT2 = await addLiquidity(lp, lpSupplier, deposit.sub(await lp.nodeWithdrawView(lpNFT)), oracleResponse);
 
-      oracleResponse = await getOracleResponse(stakingConnector, lp, oracle, lpSupplier, deposit);
+      oracleResponse = await getOracleResponse(stakingConnector, lp, oracle, lpSupplier, stakeAmount);
       await expect(addLiquidity(lp, lpSupplier, 1, oracleResponse)).to.be.revertedWithCustomError(
         stakingConnector,
         "InsufficientDepositLimit"
@@ -376,7 +381,7 @@ describe("Staking connector test", function () {
       await makeWithdrawLiquidity(lp, lpSupplier, lpNFT2, MULTIPLIER);
     });
     it("deposit - resolve profitable condition - withdraw (1%) - withdraw (100%)", async () => {
-      let oracleResponse = await getOracleResponse(stakingConnector, lp, oracle, lpSupplier, deposit);
+      let oracleResponse = await getOracleResponse(stakingConnector, lp, oracle, lpSupplier, stakeAmount);
       const lpNFT = await addLiquidity(lp, lpSupplier, deposit, oracleResponse);
 
       let time = await getBlockTime(ethers);
@@ -389,7 +394,8 @@ describe("Staking connector test", function () {
         [pool2, pool1],
         [OUTCOMEWIN, OUTCOMELOSE],
         REINFORCEMENT,
-        MARGINALITY
+        MARGINALITY,
+        false
       );
       await makeBetGetTokenId(
         lp,
@@ -407,7 +413,7 @@ describe("Staking connector test", function () {
       await core.connect(oracle).resolveCondition(condId, [OUTCOMEWIN]);
       await makeWithdrawLiquidity(lp, lpSupplier, lpNFT, MULTIPLIER * 0.01);
 
-      oracleResponse = await getOracleResponse(stakingConnector, lp, oracle, lpSupplier, deposit);
+      oracleResponse = await getOracleResponse(stakingConnector, lp, oracle, lpSupplier, stakeAmount);
       await expect(addLiquidity(lp, lpSupplier, 1, oracleResponse)).to.be.revertedWithCustomError(
         stakingConnector,
         "InsufficientDepositLimit"
@@ -416,12 +422,12 @@ describe("Staking connector test", function () {
       await makeWithdrawLiquidity(lp, lpSupplier, lpNFT, MULTIPLIER);
     });
     it("deposit - transfer lpNFT - withdraw (100%)", async () => {
-      let oracleResponse = await getOracleResponse(stakingConnector, lp, oracle, lpSupplier, deposit);
+      let oracleResponse = await getOracleResponse(stakingConnector, lp, oracle, lpSupplier, stakeAmount);
       const lpNFT = await addLiquidity(lp, lpSupplier, deposit, oracleResponse);
 
       await lp.connect(lpSupplier).transferFrom(lpSupplier.address, poolOwner.address, lpNFT);
 
-      oracleResponse = await getOracleResponse(stakingConnector, lp, oracle, lpSupplier, deposit);
+      oracleResponse = await getOracleResponse(stakingConnector, lp, oracle, lpSupplier, stakeAmount);
       await expect(addLiquidity(lp, lpSupplier, 1, oracleResponse)).to.be.revertedWithCustomError(
         stakingConnector,
         "InsufficientDepositLimit"
@@ -434,13 +440,13 @@ describe("Staking connector test", function () {
       await makeWithdrawLiquidity(lp, poolOwner, lpNFT, MULTIPLIER);
     });
     it("deposit - transfer lpNFT - withdraw (50%) - deposit - withdraw (50%)", async () => {
-      let oracleResponse = await getOracleResponse(stakingConnector, lp, oracle, lpSupplier, deposit);
+      let oracleResponse = await getOracleResponse(stakingConnector, lp, oracle, lpSupplier, stakeAmount);
       const lpNFT = await addLiquidity(lp, lpSupplier, deposit, oracleResponse);
 
       await lp.connect(lpSupplier).transferFrom(lpSupplier.address, poolOwner.address, lpNFT);
       await makeWithdrawLiquidity(lp, poolOwner, lpNFT, MULTIPLIER / 2);
 
-      oracleResponse = await getOracleResponse(stakingConnector, lp, oracle, lpSupplier, deposit);
+      oracleResponse = await getOracleResponse(stakingConnector, lp, oracle, lpSupplier, stakeAmount);
       await expect(addLiquidity(lp, lpSupplier, deposit.div(2).add(1), oracleResponse)).to.be.revertedWithCustomError(
         stakingConnector,
         "InsufficientDepositLimit"
@@ -458,18 +464,35 @@ describe("Staking connector test", function () {
   context("Settings management", function () {
     it("Remove liquidity manager", async () => {
       await lp.connect(poolOwner).changeLiquidityManager(ethers.constants.AddressZero);
-      const oracleResponse = await getOracleResponse(stakingConnector, lp, oracle, lpSupplier, deposit);
+      const oracleResponse = await getOracleResponse(stakingConnector, lp, oracle, lpSupplier, stakeAmount);
       const lpNFT = await addLiquidity(lp, lpSupplier, deposit, oracleResponse);
 
       await makeWithdrawLiquidity(lp, lpSupplier, lpNFT, MULTIPLIER);
     });
     it("Add liquidity manager after depositing liquidity", async () => {
       await lp.connect(poolOwner).changeLiquidityManager(ethers.constants.AddressZero);
-      const oracleResponse = await getOracleResponse(stakingConnector, lp, oracle, lpSupplier, deposit);
+      const oracleResponse = await getOracleResponse(stakingConnector, lp, oracle, lpSupplier, stakeAmount);
       const lpNFT = await addLiquidity(lp, lpSupplier, deposit, oracleResponse);
 
       await lp.connect(poolOwner).changeLiquidityManager(stakingConnector.address);
       await makeWithdrawLiquidity(lp, lpSupplier, lpNFT, MULTIPLIER);
+    });
+    it("Change deposit rate", async () => {
+      const newDepositRate = depositRate / 10;
+      await stakingConnector.connect(poolOwner).changeDepositRate(newDepositRate);
+
+      let oracleResponse = await getOracleResponse(stakingConnector, lp, oracle, lpSupplier, stakeAmount);
+      await expect(addLiquidity(lp, lpSupplier, deposit, oracleResponse)).to.be.revertedWithCustomError(
+        stakingConnector,
+        "InsufficientDepositLimit"
+      );
+
+      const newDeposit = stakeAmount.mul(newDepositRate).div(MULTIPLIER);
+      await expect(addLiquidity(lp, lpSupplier, newDeposit.add(1), oracleResponse)).to.be.revertedWithCustomError(
+        stakingConnector,
+        "InsufficientDepositLimit"
+      );
+      await expect(addLiquidity(lp, lpSupplier, newDeposit, oracleResponse)).to.be.not.reverted;
     });
   });
   context("Check restrictions", function () {
@@ -486,7 +509,7 @@ describe("Staking connector test", function () {
       );
     });
     it("Liquidity CAN NOT be added if oracle response contains another LP address", async () => {
-      const oracleResponse = await getOracleResponse(stakingConnector, core, oracle, lpSupplier, deposit);
+      const oracleResponse = await getOracleResponse(stakingConnector, core, oracle, lpSupplier, stakeAmount);
       await expect(addLiquidity(lp, lpSupplier, deposit, oracleResponse)).to.be.revertedWithCustomError(
         stakingConnector,
         "OracleResponseDoesNotMatch"
@@ -563,7 +586,7 @@ describe("Staking connector test", function () {
       );
     });
     it("Liquidity CAN NOT be added if oracle response is generated by another oracle", async () => {
-      const oracleResponse = await getOracleResponse(stakingConnector, lp, poolOwner, lpSupplier, deposit);
+      const oracleResponse = await getOracleResponse(stakingConnector, lp, poolOwner, lpSupplier, stakeAmount);
       await expect(addLiquidity(lp, lpSupplier, deposit, oracleResponse)).to.be.revertedWithCustomError(
         stakingConnector,
         "InvalidSignature"
@@ -634,7 +657,7 @@ describe("Staking connector test", function () {
       );
     });
     it("Liquidity CANNOT be added if it exceeds the deposit limit specified in the oracle response", async () => {
-      const oracleResponse = await getOracleResponse(stakingConnector, lp, oracle, lpSupplier, deposit);
+      const oracleResponse = await getOracleResponse(stakingConnector, lp, oracle, lpSupplier, stakeAmount);
       await expect(addLiquidity(lp, lpSupplier, deposit.add(1), oracleResponse)).to.be.revertedWithCustomError(
         stakingConnector,
         "InsufficientDepositLimit"

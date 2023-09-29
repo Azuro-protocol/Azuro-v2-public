@@ -91,10 +91,9 @@ contract X2OrNothing is VRFConsumer, OwnableUpgradeable, IX2OrNothing {
      * @notice Changes the payout multiplier
      * @param newPayoutMultiplier the new payout multiplier
      */
-    function changePayoutMultiplier(uint64 newPayoutMultiplier)
-        external
-        onlyOwner
-    {
+    function changePayoutMultiplier(
+        uint64 newPayoutMultiplier
+    ) external onlyOwner {
         if (newPayoutMultiplier == 0) revert IncorrectPayoutMultiplier();
         payoutMultiplier = newPayoutMultiplier;
         emit PayoutMultiplierChanged(newPayoutMultiplier);
@@ -280,11 +279,7 @@ contract X2OrNothing is VRFConsumer, OwnableUpgradeable, IX2OrNothing {
      * @param amount the amount to bet
      * @param betType the bet type
      */
-    function _putBet(
-        address bettor,
-        uint128 amount,
-        BetType betType
-    ) internal {
+    function _putBet(address bettor, uint128 amount, BetType betType) internal {
         _checkBetAmount(amount);
         Game storage game = games[bettor];
 
@@ -326,11 +321,9 @@ contract X2OrNothing is VRFConsumer, OwnableUpgradeable, IX2OrNothing {
      * @param game the user's game
      * @return payout amount
      */
-    function _viewPayout(Game storage game)
-        internal
-        view
-        returns (uint128 payout)
-    {
+    function _viewPayout(
+        Game storage game
+    ) internal view returns (uint128 payout) {
         if (game.payout != 0) {
             payout = game.payout;
         } else if (game.refundAfter <= block.timestamp) {

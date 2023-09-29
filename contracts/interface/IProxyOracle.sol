@@ -16,6 +16,7 @@ interface IProxyOracle {
         uint128 reinforcement;
         uint64 margin;
         uint8 winningOutcomesCount;
+        bool isExpressForbidden;
     }
 
     struct CreateGameData {

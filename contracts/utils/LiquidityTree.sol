@@ -48,11 +48,9 @@ contract LiquidityTree {
      * @dev leaf withdraw preview, emulates push value from updated node to leaf
      * @param leaf - withdrawing leaf
      */
-    function nodeWithdrawView(uint48 leaf)
-        public
-        view
-        returns (uint128 withdrawAmount)
-    {
+    function nodeWithdrawView(
+        uint48 leaf
+    ) public view returns (uint128 withdrawAmount) {
         if (leaf < LIQUIDITYNODES || leaf > LIQUIDITYLASTNODE) return 0;
         if (treeNode[leaf].updateId == 0) return 0;
 
@@ -136,10 +134,9 @@ contract LiquidityTree {
      * @dev add liquidity amount from the leaf up to top node
      * @param amount - adding amount
      */
-    function _nodeAddLiquidity(uint128 amount)
-        internal
-        returns (uint48 resNode)
-    {
+    function _nodeAddLiquidity(
+        uint128 amount
+    ) internal returns (uint48 resNode) {
         resNode = nextNode++;
         _updateUp(resNode, amount, false, ++updateId);
     }
@@ -154,10 +151,10 @@ contract LiquidityTree {
      * @param leaf -
      * @param percent - percent of leaf amount 1*10^12 is 100%, 5*10^11 is 50%
      */
-    function _nodeWithdrawPercent(uint48 leaf, uint40 percent)
-        internal
-        returns (uint128 withdrawAmount)
-    {
+    function _nodeWithdrawPercent(
+        uint48 leaf,
+        uint40 percent
+    ) internal returns (uint128 withdrawAmount) {
         if (treeNode[leaf].updateId == 0) revert LeafNotExist();
         if (percent > FixedMath.ONE) revert IncorrectPercent();
 
@@ -452,15 +449,7 @@ contract LiquidityTree {
         uint48 start,
         uint48 end,
         uint48 leaf
-    )
-        internal
-        view
-        returns (
-            uint48 resParent,
-            uint48 resBegin,
-            uint48 resEnd
-        )
-    {
+    ) internal view returns (uint48 resParent, uint48 resBegin, uint48 resEnd) {
         // if node is older than it's parent, stop and return parent
         if (treeNode[node].updateId < parentUpdate) {
             return (parent, parentBegin, parentEnd);

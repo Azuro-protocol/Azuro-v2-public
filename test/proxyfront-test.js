@@ -48,6 +48,7 @@ describe("ProxyFront test", function () {
   const minDepo = tokens(10);
   const daoFee = MULTIPLIER * 0.09; // 9%
   const dataProviderFee = MULTIPLIER * 0.01; // 1%
+  const affiliateFee = MULTIPLIER * 0.6; // 60%
 
   const pool1 = 5000000;
   const pool2 = 5000000;
@@ -62,17 +63,19 @@ describe("ProxyFront test", function () {
   let betsData = [];
 
   async function deployAndInit() {
-    [dao, poolOwner, dataProvider, oracle, oracle2, maintainer, account] = await ethers.getSigners();
+    [dao, poolOwner, dataProvider, affiliate, oracle, oracle2, maintainer, account] = await ethers.getSigners();
 
     ({ access, core, wxDAI, lp, azuroBet, roleIds } = await prepareStand(
       ethers,
       dao,
       poolOwner,
       dataProvider,
+      affiliate,
       account,
       minDepo,
       daoFee,
       dataProviderFee,
+      affiliateFee,
       LIQUIDITY
     ));
 
@@ -103,7 +106,7 @@ describe("ProxyFront test", function () {
       betsAmount = betsAmount.add(betAmount);
     }
 
-    await createGame(lp, oracle, gameId, time + ONE_HOUR);
+    await createGame(lp, oracle, ++gameId, time + ONE_HOUR);
     await createCondition(
       core,
       oracle,
@@ -112,7 +115,8 @@ describe("ProxyFront test", function () {
       [pool2, pool1],
       [OUTCOMEWIN, OUTCOMELOSE],
       REINFORCEMENT,
-      MARGINALITY
+      MARGINALITY,
+      false
     );
   }
 
