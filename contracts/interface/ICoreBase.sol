@@ -109,6 +109,15 @@ interface ICoreBase is ICondition, IOwnable, IBet {
     ) external view returns (Condition memory);
 
     /**
+     * @notice Get condition's reinforcement and margin by it's ID.
+     * @param  conditionId the match or condition ID
+     * @return the condition struct
+     */
+    function getConditionSettings(
+        uint256 conditionId
+    ) external view returns (uint128, uint64);
+
+    /**
      * @notice Indicate the condition `conditionId` as canceled.
      * @notice The condition creator can always cancel it regardless of granted access tokens.
      */

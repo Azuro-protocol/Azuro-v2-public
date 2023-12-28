@@ -182,14 +182,14 @@ abstract contract CoreBase is OwnableUpgradeable, ICoreBase {
         condition.reinforcement = newReinforcement;
         condition.fund = newFund;
 
-        _applyOdds(
-            condition,
-            CoreTools.calcOdds(
-                condition.virtualFunds,
-                condition.margin,
-                condition.winningOutcomesCount
-            )
+        uint256[] memory newOdds = CoreTools.calcOdds(
+            condition.virtualFunds,
+            0,
+            condition.winningOutcomesCount
         );
+        _applyOdds(condition, newOdds);
+
+        emit OddsChanged(conditionId, newOdds);
         emit ReinforcementChanged(conditionId, newReinforcement);
     }
 
@@ -263,6 +263,20 @@ abstract contract CoreBase is OwnableUpgradeable, ICoreBase {
         uint256 conditionId
     ) external view returns (Condition memory) {
         return conditions[conditionId];
+    }
+
+    /**
+     * @notice Get condition's reinforcement and margin by it's ID.
+     * @param  conditionId the match or condition ID
+     * @return the condition struct
+     */
+    function getConditionSettings(
+        uint256 conditionId
+    ) external view returns (uint128, uint64) {
+        return (
+            conditions[conditionId].reinforcement,
+            conditions[conditionId].margin
+        );
     }
 
     /**
@@ -452,6 +466,7 @@ abstract contract CoreBase is OwnableUpgradeable, ICoreBase {
         uint256 normalizedFund = (fund * FixedMath.ONE).div(normalizer);
         for (uint256 i = 0; i < length; ++i) {
             uint256 virtualFund = normalizedFund / odds[i];
+            if (virtualFund == 0) revert InsufficientFund();
             if (virtualFund >= maxVirtualFund) revert CoreTools.IncorrectOdds();
 
             condition.virtualFunds[i] = uint128(virtualFund);
@@ -554,7 +569,8 @@ abstract contract CoreBase is OwnableUpgradeable, ICoreBase {
     function _getRunningConditionGameInfo(
         Condition storage condition
     ) internal view virtual returns (uint64 startsAt, bool gameIsCanceled) {
-        if (condition.state != ConditionState.CREATED)
+        ConditionState state = condition.state;
+        if (state != ConditionState.CREATED && state != ConditionState.PAUSED)
             revert ConditionNotRunning();
         return lp.getGameInfo(condition.gameId);
     }
@@ -577,5 +593,14 @@ abstract contract CoreBase is OwnableUpgradeable, ICoreBase {
         Condition storage condition
     ) internal view returns (bool) {
         return condition.state == ConditionState.RESOLVED;
+    }
+
+    /**
+     * @notice Check if condition is stopped or not.
+     */
+    function _isConditionStopped(
+        Condition storage condition
+    ) internal view returns (bool) {
+        return condition.state == ConditionState.PAUSED;
     }
 }

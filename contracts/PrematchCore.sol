@@ -50,6 +50,7 @@ contract PrematchCore is CoreBase, IPrematchCore {
         CoreBetData memory data = abi.decode(betData.data, (CoreBetData));
         Condition storage condition = _getCondition(data.conditionId);
         _conditionIsRunning(condition);
+        if (_isConditionStopped(condition)) revert ConditionNotRunning();
 
         uint256 outcomeIndex = getOutcomeIndex(
             data.conditionId,

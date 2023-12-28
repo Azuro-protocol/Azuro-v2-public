@@ -40,6 +40,12 @@ interface IProxyOracle {
         bool flag;
     }
 
+    struct ChangeConditionSettingsData {
+        uint256 conditionId;
+        uint64 margin;
+        uint128 reinforcement;
+    }
+
     struct changeMarginData {
         uint256 conditionId;
         uint64 margin;
@@ -52,5 +58,6 @@ interface IProxyOracle {
 
     event ReinforcementLimitChanged(uint256);
 
+    error NothingChanged();
     error TooLargeReinforcement();
 }

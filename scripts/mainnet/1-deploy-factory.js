@@ -77,7 +77,7 @@ async function main() {
 
   // setting up
   console.log("updatePrematchCoreType for pre-match...");
-  await factory.updatePrematchCoreType("pre-match", beaconPrematchCore.address, beaconAzuroBet.address);
+  await factory.updateCoreType("pre-match", beaconPrematchCore.address, beaconAzuroBet.address);
   await timeout();
 
   const factoryImplAddress = await upgrades.erc1967.getImplementationAddress(factory.address);

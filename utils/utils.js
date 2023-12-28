@@ -17,7 +17,7 @@ function getTimeout(chainId) {
       timeout = 800;
       break; // Hardhat
     default:
-      timeout = 30000;
+      timeout = 50000;
   }
 
   return () => {

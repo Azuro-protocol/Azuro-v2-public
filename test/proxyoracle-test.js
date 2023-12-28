@@ -43,7 +43,7 @@ const reinforcementCheck = async (
     conditionsTargetData.push({
       gameId: conditionsData[i].gameId,
       conditionId: conditionsData[i].conditionId * 10,
-      odds: await coreTools.calcOdds(condition.virtualFunds, condition.margin, condition.winningOutcomesCount),
+      odds: await coreTools.calcOdds(condition.virtualFunds, 0, condition.winningOutcomesCount),
       outcomes: conditionsData[i].outcomes,
       reinforcement: changeData[i].reinforcement,
       margin: changeData[i].margin,
@@ -580,6 +580,44 @@ describe("ProxyOracle test", function () {
       await expect(
         proxyOracle.connect(oracle).changeReinforcements(core.address, changeData)
       ).to.be.revertedWithCustomError(core, "NothingChanged");
+    });
+    it("Change margin and reinforcement together", async () => {
+      await proxyOracle.connect(poolOwner).createGames(gamesData);
+      await proxyOracle.connect(poolOwner).createConditions(core.address, conditionsData);
+
+      const changeDataNothingChanged = [];
+      for (let i = 0; i < conditionsData.length; ++i) {
+        const condition = await core.getCondition(conditionsData[i].conditionId);
+        changeDataNothingChanged.push({
+          conditionId: conditionsData[i].conditionId,
+          margin: condition.margin,
+          reinforcement: condition.reinforcement,
+        });
+      }
+
+      const changeData = [];
+      for (let i = 0; i < conditionsData.length; ++i) {
+        changeData.push({
+          conditionId: conditionsData[i].conditionId,
+          margin: MULTIPLIER * 0.01 * i,
+          reinforcement: REINFORCEMENT.add(tokens(100)),
+        });
+      }
+
+      await grantRole(proxyOracleAccess, poolOwner, oracle.address, proxyOracleRoleIds["ReinforcementChanger"]);
+
+      await expect(
+        proxyOracle.connect(oracle).changeConditionSettings(core.address, changeDataNothingChanged)
+      ).to.be.revertedWithCustomError(proxyOracle, "NothingChanged");
+
+      await proxyOracle.connect(oracle).changeConditionSettings(core.address, changeData);
+
+      let condition;
+      for (let index = 0; index < changeData.length; index++) {
+        condition = await core.getCondition(changeData[index].conditionId);
+        expect(condition.margin).to.be.eq(changeData[index].margin);
+        expect(condition.reinforcement).to.be.eq(changeData[index].reinforcement);
+      }
     });
   });
   context("Check restrictions", function () {

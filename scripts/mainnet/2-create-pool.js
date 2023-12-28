@@ -21,6 +21,7 @@ async function main() {
   const minDepo = tokens(10);
   const daoFee = MULTIPLIER * 0.09; // 9%
   const dataProviderFee = MULTIPLIER * 0.01; // 1%
+  const affiliateFee = MULTIPLIER * 0.6; // 60%
 
   let factory, access, core, lp, azuroBet;
 
@@ -38,7 +39,8 @@ async function main() {
     TOKEN_ADDRESS,
     minDepo,
     daoFee,
-    dataProviderFee
+    dataProviderFee,
+    affiliateFee
   ));
   await timeout();
 

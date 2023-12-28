@@ -115,6 +115,37 @@ contract ProxyOracle is OwnableUpgradeable, IProxyOracle {
     }
 
     /**
+     * @notice Call `changeMargins` and `changeReinforcements` in the same time.
+     * @param  core the address of the Core using for creating conditions
+     * @param  data an array of input data structures for changing conditions settings
+     */
+    function changeConditionSettings(
+        address core,
+        ChangeConditionSettingsData[] calldata data
+    ) external restricted(this.changeReinforcements.selector) {
+        IPrematchCore core_ = IPrematchCore(core);
+        uint256 reinforcementLimit_ = reinforcementLimit;
+        for (uint256 i = 0; i < data.length; ++i) {
+            uint64 newMargin = data[i].margin;
+            uint128 newReinforcement = data[i].reinforcement;
+            uint256 conditionId = data[i].conditionId;
+            (uint128 reinforcement, uint64 margin) = core_.getConditionSettings(
+                conditionId
+            );
+            if (newReinforcement == reinforcement && newMargin == margin)
+                revert NothingChanged();
+
+            if (newReinforcement != reinforcement) {
+                if (reinforcement > reinforcementLimit_)
+                    revert TooLargeReinforcement();
+
+                core_.changeReinforcement(conditionId, newReinforcement);
+            }
+            if (newMargin != margin) core_.changeMargin(conditionId, newMargin);
+        }
+    }
+
+    /**
      * @notice The batch version of {IPrematchCore-createCondition}.
      * @param  core the address of the Core using for creating conditions
      * @param  data an array of input data structures for creating conditions using {IPrematchCore-createCondition}

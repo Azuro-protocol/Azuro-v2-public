@@ -433,6 +433,21 @@ describe("Prematch Core test", function () {
         createCondition(core, oracle, gameId, condId, [pool2, pool1], OUTCOMES, reinforcement, marginality, false)
       ).to.be.revertedWithCustomError(core, "ConditionAlreadyCreated");
     });
+    it("Should NOT create condition with the reinforcement that makes the virtual funds of the condition equal to zero", async () => {
+      time = await getBlockTime(ethers);
+      await createGame(lp, oracle, ++gameId, time + ONE_HOUR);
+
+      condId++;
+      await expect(
+        createCondition(core, oracle, gameId, condId, [pool2, pool1], OUTCOMES, 0, marginality, false)
+      ).to.be.revertedWithCustomError(core, "InsufficientFund");
+      await expect(
+        createCondition(core, oracle, gameId, condId, [pool2, pool1], OUTCOMES, 1, marginality, false)
+      ).to.be.revertedWithCustomError(core, "InsufficientFund");
+      await expect(
+        createCondition(core, oracle, gameId, condId, [100000, 1], OUTCOMES, 100000, marginality, false)
+      ).to.be.revertedWithCustomError(core, "InsufficientFund");
+    });
     it("Should NOT resolve condition that not been created before", async () => {
       await expect(core.connect(oracle).resolveCondition(++condId, [OUTCOMEWIN])).to.be.revertedWithCustomError(
         core,
@@ -688,6 +703,29 @@ describe("Prematch Core test", function () {
         "GameAlreadyCreated"
       );
     });
+    it("Should NOT change the reinforcement so the virtual funds of the condition become equal to zero", async () => {
+      time = await getBlockTime(ethers);
+      await createGame(lp, oracle, ++gameId, time + ONE_HOUR);
+
+      condId++;
+      await createCondition(core, oracle, gameId, condId, [pool2, pool1], OUTCOMES, reinforcement, marginality, false);
+
+      await expect(core.connect(maintainer).changeReinforcement(condId, 0)).to.be.revertedWithCustomError(
+        core,
+        "InsufficientFund"
+      );
+      await expect(core.connect(maintainer).changeReinforcement(condId, 1)).to.be.revertedWithCustomError(
+        core,
+        "InsufficientFund"
+      );
+
+      condId++;
+      await createCondition(core, oracle, gameId, condId, [100000, 1], OUTCOMES, reinforcement, marginality, false);
+      await expect(core.connect(maintainer).changeReinforcement(condId, 100)).to.be.revertedWithCustomError(
+        core,
+        "InsufficientFund"
+      );
+    });
     it("Should shift game start", async () => {
       time = await getBlockTime(ethers);
       await createGame(lp, oracle, ++gameId, time + ONE_HOUR);
@@ -741,13 +779,9 @@ describe("Prematch Core test", function () {
         );
         await expect(core.connect(oracle).changeOdds(condId, [100, 0])).to.be.revertedWithCustomError(core, "ZeroOdds");
 
-        // Stop condition
-        await core.connect(oracle).changeOdds(condId, newOdds); // success
+        // Change odds for stopped condition
         await core.connect(maintainer).stopCondition(condId, true);
-        await expect(core.connect(oracle).changeOdds(condId, newOdds2)).to.be.revertedWithCustomError(
-          core,
-          "ConditionNotRunning"
-        );
+        await core.connect(oracle).changeOdds(condId, newOdds); // success
 
         await core.connect(maintainer).stopCondition(condId, false);
 
