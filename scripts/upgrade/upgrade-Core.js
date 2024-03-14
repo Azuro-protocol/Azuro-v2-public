@@ -10,9 +10,6 @@ async function main() {
   console.log("Deployer balance:", (await deployer.getBalance()).toString());
 
   const PrematchCore = await ethers.getContractFactory("PrematchCore", {
-    libraries: {
-      AffiliateHelper: process.env.AFFILIATEHELPER_ADDRESS,
-    },
     unsafeAllowCustomTypes: true,
   });
   const beaconAddress = process.env.BEACON_CORE_ADDRESS;

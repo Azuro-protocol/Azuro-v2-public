@@ -1,21 +1,16 @@
 const { ethers, upgrades } = require("hardhat");
 const hre = require("hardhat");
 const {
+  addLiquidity,
   tokens,
   getTimeout,
   deployContracts,
   createFactory,
   createPool,
-  grantRole,
   prepareRoles,
-  getLPNFTTokenDetails,
 } = require("../utils/utils");
 
 const TOKEN_ADDRESS = process.env.TOKEN_ADDRESS;
-const ORACLES = JSON.parse(process.env.ORACLES ?? "[]");
-const MAINTAINERS = JSON.parse(process.env.MAINTAINERS ?? "[]");
-const ODDS_MANAGERS = JSON.parse(process.env.ODDS_MANAGERS ?? "[]");
-const FREEBET_MANAGER = process.env.FREEBET_MANAGER;
 
 async function main() {
   const [deployer] = await ethers.getSigners();
@@ -24,7 +19,7 @@ async function main() {
   const daoFee = MULTIPLIER * 0.09; // 9%
   const dataProviderFee = MULTIPLIER * 0.01; // 1%
 
-  let token, factory, beaconAccess, beaconLP, beaconPrematchCore, beaconLiveCore, beaconAzuroBet;
+  let token, factory, beaconAccess, beaconLP, beaconPrematchCore, beaconAzuroBet;
   let summary = {};
 
   console.log("Deployer wallet:", deployer.address);
@@ -32,15 +27,13 @@ async function main() {
   const chainId = await hre.network.provider.send("eth_chainId");
   const timeout = getTimeout(chainId);
 
-  const FreeBet = await ethers.getContractFactory("FreeBet");
-
   const Token = await ethers.getContractFactory("TestERC20");
   token = await Token.attach(TOKEN_ADDRESS);
   summary["token"] = TOKEN_ADDRESS;
 
   // Beacons
   {
-    ({ beaconAccess, beaconLP, beaconPrematchCore, beaconLiveCore, beaconAzuroBet } = await deployContracts(
+    ({ beaconAccess, beaconLP, beaconPrematchCore, beaconAzuroBet } = await deployContracts(
       ethers,
       deployer
     ));
@@ -76,7 +69,6 @@ async function main() {
       beaconAccess,
       beaconLP,
       beaconPrematchCore,
-      beaconLiveCore,
       beaconAzuroBet
     );
     await timeout();
@@ -97,19 +89,11 @@ async function main() {
         factory,
         deployer,
         token.address,
-        1e19,
+        1,
         daoFee,
         dataProviderFee,
         oracle.address
       ));
-
-      const freeBet = await upgrades.deployProxy(FreeBet, [TOKEN_ADDRESS], { useDeployedImplementation: false });
-      await timeout();
-      await freeBet.deployed();
-      await freeBet.setLp(lp.address);
-      await timeout();
-      await freeBet.setManager(FREEBET_MANAGER);
-      console.log("FREEBET MANAGER:", FREEBET_MANAGER);
 
       console.log(
         "\nACCESS:",
@@ -120,9 +104,7 @@ async function main() {
         core.address,
         "\nLP:",
         lp.address,
-        "\nFREEBET:",
-        freeBet.address,
-        "\nTOKEN:",
+        "\n\nTOKEN:",
         token.address
       );
       summary[`pool ${i + 1}`] = {
@@ -130,16 +112,15 @@ async function main() {
         azuroBet: azuroBet.address,
         core: core.address,
         lp: lp.address,
-        freeBet: freeBet.address,
       };
 
       // setting up
       const liquidity = tokens(100_000_000);
       await token.connect(deployer).approve(lp.address, liquidity);
       await timeout();
-      const lpnft = await getLPNFTTokenDetails(await lp.connect(deployer).addLiquidity(liquidity));
+      const lpnft = await addLiquidity(lp, deployer, liquidity);
       await timeout();
-      console.log("Liquidity added:", lpnft.amount.toString(), "\nLPNFT:", lpnft.tokenId);
+      console.log("\nLiquidity added:", liquidity.toString(), "\nLPNFT:", lpnft);
 
       const roleIds = await prepareRoles(access, deployer, lp, core);
       console.log(
@@ -148,70 +129,16 @@ async function main() {
         "\n- Maintainer:",
         roleIds.maintainer.toString(),
         "\n- Odds Manager:",
-        roleIds.oddsManager.toString()
+        roleIds.oddsManager.toString(),
+        "\n- Margin Manager:",
+        roleIds.marginManager.toString(),
+        "\n- Reinforcement Manager:",
+        roleIds.reinforcementManager.toString()
       );
-
-      for (const iterator of ORACLES.keys()) {
-        await grantRole(access, deployer, ORACLES[iterator], roleIds.oracle);
-        await timeout();
-      }
-      console.log("\nORACLES:", ORACLES);
-
-      for (const iterator of MAINTAINERS.keys()) {
-        await grantRole(access, deployer, MAINTAINERS[iterator], roleIds.maintainer);
-        await timeout();
-      }
-      console.log("MAINTAINERS:", MAINTAINERS);
-
-      for (const iterator of ODDS_MANAGERS.keys()) {
-        await grantRole(access, deployer, ODDS_MANAGERS[iterator], roleIds.oddsManager);
-        await timeout();
-      }
-      console.log("ODDS MANAGERS:", ODDS_MANAGERS);
     }
   }
 
   console.log("\nCONTRACTS FOR WEB APP:", JSON.stringify(summary));
-
-  // Verification
-  if (chainId != 0x7a69) {
-    try {
-      await hre.run("verify:verify", {
-        address: factory.address,
-        constructorArguments: [],
-      });
-    } catch (err) {}
-    try {
-      await hre.run("verify:verify", {
-        address: await beaconAccess.implementation(),
-        constructorArguments: [],
-      });
-    } catch (err) {}
-    try {
-      await hre.run("verify:verify", {
-        address: await beaconLP.implementation(),
-        constructorArguments: [],
-      });
-    } catch (err) {}
-    try {
-      await hre.run("verify:verify", {
-        address: await beaconPrematchCore.implementation(),
-        constructorArguments: [],
-      });
-    } catch (err) {}
-    try {
-      await hre.run("verify:verify", {
-        address: await beaconLiveCore.implementation(),
-        constructorArguments: [],
-      });
-    } catch (err) {}
-    try {
-      await hre.run("verify:verify", {
-        address: await beaconAzuroBet.implementation(),
-        constructorArguments: [],
-      });
-    } catch (err) {}
-  }
 }
 
 main()

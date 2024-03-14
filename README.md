@@ -1,4 +1,4 @@
- # Azuro-V2
+# Azuro-V2
 
 ## Test environment
 
@@ -75,4 +75,5 @@ Before deploy you need to set `.env` variables:
    ```
 
 ## Docs
-https://gem.azuro.org/contracts/overview
+
+https://www.notion.so/azuro-protocol/Azuro-V2-638427fb93d049a7a5700c5c34169ec0

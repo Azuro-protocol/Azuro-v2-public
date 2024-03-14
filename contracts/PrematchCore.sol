@@ -9,7 +9,7 @@ import "./utils/OwnableUpgradeable.sol";
 
 /// @title Azuro internal core managing pre-match conditions and processing bets on them
 contract PrematchCore is CoreBase, IPrematchCore {
-    using FixedMath for uint64;
+    using FixedMath for *;
     using SafeCast for uint256;
 
     /**
@@ -18,10 +18,12 @@ contract PrematchCore is CoreBase, IPrematchCore {
     function createCondition(
         uint256 gameId,
         uint256 conditionId,
-        uint64[2] calldata odds,
-        uint64[2] calldata outcomes,
+        uint256[] calldata odds,
+        uint64[] calldata outcomes,
         uint128 reinforcement,
-        uint64 margin
+        uint64 margin,
+        uint8 winningOutcomesCount,
+        bool isExpressForbidden
     ) external override restricted(this.createCondition.selector) {
         _createCondition(
             gameId,
@@ -29,14 +31,16 @@ contract PrematchCore is CoreBase, IPrematchCore {
             odds,
             outcomes,
             reinforcement,
-            margin
+            margin,
+            winningOutcomesCount,
+            isExpressForbidden
         );
         if (lp.addCondition(gameId) <= block.timestamp)
             revert GameAlreadyStarted();
     }
 
     /**
-     * @notice Liquidity Pool: See {ICoreBase-putBet}.
+     * @notice Liquidity Pool: See {IBet-putBet}.
      */
     function putBet(
         address bettor,
@@ -46,42 +50,58 @@ contract PrematchCore is CoreBase, IPrematchCore {
         CoreBetData memory data = abi.decode(betData.data, (CoreBetData));
         Condition storage condition = _getCondition(data.conditionId);
         _conditionIsRunning(condition);
+        if (_isConditionStopped(condition)) revert ConditionNotRunning();
 
-        uint256 outcomeIndex = _getOutcomeIndex(condition, data.outcomeId);
-
-        uint128[2] memory virtualFunds = condition.virtualFunds;
-        uint64 odds = CoreTools
-            .calcOdds(virtualFunds, amount, outcomeIndex, condition.margin)
-            .toUint64();
-        if (odds < data.minOdds) revert SmallOdds();
-
-        uint128 payout = odds.mul(amount).toUint128();
-        uint128 deltaPayout = payout - amount;
-
-        virtualFunds[outcomeIndex] += amount;
-        virtualFunds[1 - outcomeIndex] -= deltaPayout;
-        condition.virtualFunds = virtualFunds;
-
-        {
-            uint128[2] memory funds = condition.funds;
-            _changeFunds(
-                condition,
-                funds,
-                outcomeIndex == 0
-                    ? [funds[0] + amount, funds[1] - deltaPayout]
-                    : [funds[0] - deltaPayout, funds[1] + amount]
-            );
-        }
-
-        _updateContribution(
-            betData.affiliate,
+        uint256 outcomeIndex = getOutcomeIndex(
             data.conditionId,
-            amount,
-            payout,
-            outcomeIndex
+            data.outcomeId
         );
 
+        uint128[] memory virtualFunds = condition.virtualFunds;
+        virtualFunds[outcomeIndex] += amount;
+
+        uint256 winningOutcomesCount = condition.winningOutcomesCount;
+        uint64 odds = CoreTools
+        .calcOdds(virtualFunds, condition.margin, winningOutcomesCount)[
+            outcomeIndex
+        ].toUint64();
+
+        if (odds < betData.minOdds) revert CoreTools.IncorrectOdds();
+
         tokenId = azuroBet.mint(bettor);
+        _emitBetMargin(
+            tokenId,
+            amount,
+            virtualFunds,
+            outcomeIndex,
+            winningOutcomesCount,
+            odds
+        );
+
+        uint128 payout = odds.mul(amount).toUint128();
+        {
+            uint256 virtualFund = Math.sum(virtualFunds);
+            uint256 oppositeVirtualFund = virtualFund -
+                virtualFunds[outcomeIndex];
+            uint256 deltaPayout = payout - amount;
+            uint256 length = virtualFunds.length;
+            for (uint256 i = 0; i < length; ++i) {
+                if (i != outcomeIndex) {
+                    virtualFunds[i] -= uint128(
+                        (deltaPayout * virtualFunds[i]) / oppositeVirtualFund
+                    );
+                    CoreTools.calcProbability(
+                        virtualFunds[i],
+                        virtualFund,
+                        condition.winningOutcomesCount
+                    );
+                }
+            }
+        }
+
+        condition.virtualFunds = virtualFunds;
+        _changeFunds(condition, outcomeIndex, amount, payout);
+
         {
             Bet storage bet = bets[tokenId];
             bet.conditionId = data.conditionId;
@@ -104,27 +124,29 @@ contract PrematchCore is CoreBase, IPrematchCore {
 
     /**
      * @notice Indicate outcome `outcomeWin` as happened in condition `conditionId`.
-     * @notice See {CoreBase-_resolveCondition}.
+     * @notice Only condition creator can resolve it.
+     * @param  conditionId the match or condition ID
+     * @param  winningOutcomes_ the IDs of the winning outcomes of the condition
      */
-    function resolveCondition(uint256 conditionId, uint64 outcomeWin)
-        external
-        override
-    {
-        _resolveCondition(conditionId, outcomeWin);
-    }
+    function resolveCondition(
+        uint256 conditionId,
+        uint64[] calldata winningOutcomes_
+    ) external override resolveConditionBase(conditionId, winningOutcomes_) {}
 
     /**
-     * @notice Liquidity Pool: Resolve AzuroBet token `tokenId` payout.
-     * @param  tokenId AzuroBet token ID
-     * @return winning account
-     * @return amount of winnings
+     * @notice Emits the real marginality of the bet `betId`.
      */
-    function resolvePayout(uint256 tokenId)
-        external
-        override
-        onlyLp
-        returns (address, uint128)
-    {
-        return _resolvePayout(tokenId);
+    function _emitBetMargin(
+        uint256 betId,
+        uint128 amount,
+        uint128[] memory funds,
+        uint256 outcomeIndex,
+        uint256 winningOutcomesCount,
+        uint256 odds
+    ) internal {
+        uint256 margin = FixedMath.ONE -
+            ((odds * (funds[outcomeIndex] - amount) * winningOutcomesCount) /
+                (Math.sum(funds) - amount));
+        emit NewBetMargin(betId, margin);
     }
 }

@@ -3,14 +3,10 @@
 pragma solidity ^0.8.9;
 
 import "../interface/ICoreBase.sol";
-import "../interface/ILPExtended.sol";
+import "../interface/ILP.sol";
 import "../interface/ISafeOracle.sol";
 import "../utils/OwnableUpgradeable.sol";
 import "@uniswap/lib/contracts/libraries/TransferHelper.sol";
-
-interface ICoreBaseExtended is ICoreBase {
-    function lp() external view returns (address);
-}
 
 interface IFactory {
     function checkLP(address lp) external view;
@@ -94,27 +90,29 @@ contract SafeOracle is OwnableUpgradeable, ISafeOracle {
      * @notice See {CoreBase-_createCondition} for common _createCondition parameters description.
      * @param  core the core on which to register the condition
      * @param  proposeDeadline the timestamp by which an Oracle undertakes to propose solution
+     * @param  isExpressForbidden true - not allowed to use in express bets
      */
     function createCondition(
         address core,
         uint256 gameId,
         uint256 conditionId,
-        uint64[2] calldata odds,
-        uint64[2] calldata outcomes,
+        uint256[] calldata odds,
+        uint64[] calldata outcomes,
         uint128 reinforcement,
         uint64 margin,
-        uint64 proposeDeadline
+        uint8 winningOutcomesCount,
+        uint64 proposeDeadline,
+        bool isExpressForbidden
     ) external {
         if (proposeDeadline < block.timestamp)
             revert IncorrectProposeDeadline();
-        address lpAddress = ICoreBaseExtended(core).lp();
-        factory.checkLP(lpAddress);
+        ILP lp = ICoreBase(core).lp();
+        factory.checkLP(address(lp));
 
-        ILPExtended lp = ILPExtended(lpAddress);
         lp.checkAccess(
             msg.sender,
             core,
-            ICoreBaseExtended(core).createCondition.selector
+            ICoreBase(core).createCondition.selector
         );
         lp.checkCore(core);
         if (ICoreBase(core).getCondition(conditionId).gameId != 0)
@@ -128,13 +126,15 @@ contract SafeOracle is OwnableUpgradeable, ISafeOracle {
         condition.insurance = insurance_;
         _payInsurance(insurance_);
 
-        ICoreBaseExtended(core).createCondition(
+        ICoreBase(core).createCondition(
             gameId,
             conditionId,
             odds,
             outcomes,
             reinforcement,
-            margin
+            margin,
+            winningOutcomesCount,
+            isExpressForbidden
         );
 
         emit Created(core, conditionId, msg.sender, proposeDeadline);
@@ -143,11 +143,10 @@ contract SafeOracle is OwnableUpgradeable, ISafeOracle {
     /**
      * @notice Owner: Reject the dispute and apply Oracle's proposed solution for the condition `conditionId`.
      */
-    function approve(address core, uint256 conditionId)
-        external
-        onlyOwner
-        resolver(core, conditionId, "")
-    {
+    function approve(
+        address core,
+        uint256 conditionId
+    ) external onlyOwner resolver(core, conditionId, "") {
         if (conditions[core][conditionId].state != ConditionState.DISPUTED)
             revert CantResolve();
     }
@@ -155,7 +154,10 @@ contract SafeOracle is OwnableUpgradeable, ISafeOracle {
     /**
      * @notice Owner: Caller for {CoreBase-cancelCondition}.
      */
-    function cancelCondition(address core, uint256 conditionId)
+    function cancelCondition(
+        address core,
+        uint256 conditionId
+    )
         external
         onlyOwner
         resolver(
@@ -171,16 +173,16 @@ contract SafeOracle is OwnableUpgradeable, ISafeOracle {
     function resolveCondition(
         address core,
         uint256 conditionId,
-        uint64 outcomeWin
+        uint64[] calldata winningOutcomes
     )
         external
         resolver(
             core,
             conditionId,
             abi.encodeWithSignature(
-                "resolveCondition(uint256,uint64)",
+                "resolveCondition(uint256,uint64[])",
                 conditionId,
-                outcomeWin
+                winningOutcomes
             )
         )
     {}
@@ -191,10 +193,10 @@ contract SafeOracle is OwnableUpgradeable, ISafeOracle {
      *         incorrect solution of the condition `conditionId`. Collateral will be credited to the balance
      *         back if the DAO does not consider dispute before `decisionPeriod` after proposal.
      */
-    function dispute(address core, uint256 conditionId)
-        external
-        conditionNotCanceled(core, conditionId)
-    {
+    function dispute(
+        address core,
+        uint256 conditionId
+    ) external conditionNotCanceled(core, conditionId) {
         Condition storage condition = _getCondition(core, conditionId);
         if (
             condition.state != ConditionState.PROPOSED ||
@@ -212,10 +214,10 @@ contract SafeOracle is OwnableUpgradeable, ISafeOracle {
     /**
      * @notice Apply an Oracle's proposed solution to the condition `conditionId` if it is not disputed and its dispute deadline is passed.
      */
-    function applyProposal(address core, uint256 conditionId)
-        external
-        conditionNotCanceled(core, conditionId)
-    {
+    function applyProposal(
+        address core,
+        uint256 conditionId
+    ) external conditionNotCanceled(core, conditionId) {
         Condition storage condition = _getCondition(core, conditionId);
 
         if (
@@ -246,10 +248,10 @@ contract SafeOracle is OwnableUpgradeable, ISafeOracle {
      *         b) Condition dispute deadline + `DECISION_PERIOD` if proposed solution is disputed.
      * @notice Refund back oracle and disputer stake.
      */
-    function applyCancelCondition(address core, uint256 conditionId)
-        external
-        conditionNotCanceled(core, conditionId)
-    {
+    function applyCancelCondition(
+        address core,
+        uint256 conditionId
+    ) external conditionNotCanceled(core, conditionId) {
         Condition storage condition = _getCondition(core, conditionId);
         if (block.timestamp < condition.stateExpiresAt + DECISION_PERIOD)
             revert CantAcceptSolution();
@@ -276,11 +278,12 @@ contract SafeOracle is OwnableUpgradeable, ISafeOracle {
      *         a) If solution hasn't yet been proposed and the propose deadline has not been passed, the oracle refunds its stake back.
      *         b) If proposed solution is disputed, the dao receives oracle's stake and the disputer refunds its stake back.
      */
-    function handleCanceledCondition(address core, uint256 conditionId)
-        external
-    {
+    function handleCanceledCondition(
+        address core,
+        uint256 conditionId
+    ) external {
         Condition storage condition = _getCondition(core, conditionId);
-        if (!ICoreBaseExtended(core).isConditionCanceled(conditionId))
+        if (!ICoreBase(core).isConditionCanceled(conditionId))
             revert ConditionNotCanceled();
 
         ConditionState state = condition.state;
@@ -323,11 +326,10 @@ contract SafeOracle is OwnableUpgradeable, ISafeOracle {
     /**
      * @notice Get condition by it's ID.
      */
-    function getCondition(address core, uint256 conditionId)
-        external
-        view
-        returns (Condition memory condition)
-    {
+    function getCondition(
+        address core,
+        uint256 conditionId
+    ) external view returns (Condition memory condition) {
         return _getCondition(core, conditionId);
     }
 
@@ -422,22 +424,21 @@ contract SafeOracle is OwnableUpgradeable, ISafeOracle {
     /**
      * @notice Throw if condition `conditionId` is canceled.
      */
-    function _conditionNotCanceled(address core, uint256 conditionId)
-        internal
-        view
-    {
-        if (ICoreBaseExtended(core).isConditionCanceled(conditionId))
+    function _conditionNotCanceled(
+        address core,
+        uint256 conditionId
+    ) internal view {
+        if (ICoreBase(core).isConditionCanceled(conditionId))
             revert ConditionCanceled();
     }
 
     /**
      * @notice Get condition by it's ID.
      */
-    function _getCondition(address core, uint256 conditionId)
-        internal
-        view
-        returns (Condition storage condition)
-    {
+    function _getCondition(
+        address core,
+        uint256 conditionId
+    ) internal view returns (Condition storage condition) {
         condition = conditions[core][conditionId];
         if (condition.oracle == address(0)) revert ConditionDoesNotExist();
     }

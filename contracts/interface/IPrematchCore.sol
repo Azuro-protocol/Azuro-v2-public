@@ -12,13 +12,18 @@ interface IPrematchCore is ICoreBase {
         uint256 tokenId,
         uint64 outcomeId,
         uint128 amount,
-        uint64 odds,
-        uint128[2] funds
+        uint256 odds,
+        uint128[] funds
     );
 
+    event NewBetMargin(uint256 indexed betId, uint256 margin);
+
     /**
-     * @notice Indicate outcome `outcomeWin` as happened in condition `conditionId`.
+     * @notice Indicate outcomes `winningOutcomes` as happened in condition `conditionId`.
      * @notice See {CoreBase-_resolveCondition}.
      */
-    function resolveCondition(uint256 conditionId, uint64 outcomeWin) external;
+    function resolveCondition(
+        uint256 conditionId,
+        uint64[] calldata winningOutcomes
+    ) external;
 }

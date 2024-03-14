@@ -2,7 +2,7 @@
 pragma solidity ^0.8.9;
 
 contract WETH9 {
-    uint256 MAX_INT = 2**256 - 1;
+    uint256 MAX_INT = 2 ** 256 - 1;
     string public name = "Wrapped Ether";
     string public symbol = "WETH";
     uint8 public decimals = 18;

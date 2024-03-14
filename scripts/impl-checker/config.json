@@ -1,0 +1,66 @@
+{
+  "networks": {
+    "gnosis": "https://rpc.gnosis.gateway.fm",
+    "mumbai": "https://polygon-testnet-rpc.allthatnode.com:8545",
+    "arbitrum_goerli": "https://arb-goerli.g.alchemy.com/v2/zAoWIrUFXh0jRnrzkflRMafwGUG9uyoz"
+  },
+  "versions": {
+    "v2.10.0-dev": {
+      "Access": {
+        "gnosis": "0xe15a53de7bB7b90fD79f1696f5db4F43Cd9C8D74",
+        "mumbai": "0x5dfbA28f16950136720AcBA22d30700C4270A68A",
+        "arbitrum_goerli": "0x3656D53A11090B00408678af46544a8F5C0cd0FB"
+      },
+      "Access (FreeBetFactory)": {
+        "gnosis": "0xe15a53de7bb7b90fd79f1696f5db4f43cd9c8d74",
+        "mumbai": "0x5dfba28f16950136720acba22d30700c4270a68a",
+        "arbitrum_goerli": "0x3656d53a11090b00408678af46544a8f5c0cd0fb"
+      },
+      "Access (ProxyOracle)": {
+        "gnosis": "0xe15a53de7bb7b90fd79f1696f5db4f43cd9c8d74",
+        "mumbai": "0x5dfba28f16950136720acba22d30700c4270a68a",
+        "arbitrum_goerli": "0x3656d53a11090b00408678af46544a8f5c0cd0fb"
+      },
+      "AzuroBet": {
+        "gnosis": "0x1C84d945cBb686Ed88256162fb2A070e5B862491",
+        "mumbai": "0x3D2bb8Dc98156Ff618C276353625c60147596B92",
+        "arbitrum_goerli": "0x0f0dA1F5dF5Ab5c06Ee96F437ba1Ab5ab7557e73"
+      },
+      "BetExpress": {
+        "gnosis": "0x0a4da29c0baa8aa9665956c9996b011d11f137a1",
+        "mumbai": "0x9717b4da9f59f320365641ea874d079c4e9e763b",
+        "arbitrum_goerli": "0xFcc3d8EF0fe23c11AfdB08e8a0B46672b5Feb392"
+      },
+      "Core": {
+        "gnosis": "0x6ecBd7afF3Ad156Ba219721f2315F129D7665894",
+        "mumbai": "0xA7c7719bC066ff6909AEFa1CfcAA40ee57268f44",
+        "arbitrum_goerli": "0x3f7c5935e1ee6D4910A753b2B6229C8e0D53E57b"
+      },
+      "Factory": {
+        "gnosis": "0xf8E1665FCeC1f0cB3CE8Bd28187259909B43B1a2",
+        "mumbai": "0x57A94EF77Ae6f04E8521215454a79f92b6C061E5",
+        "arbitrum_goerli": "0xeF70b827A4093d50598e20D649971F6548290f6F"
+      },
+      "FreeBet": {
+        "gnosis": "0x6402552032e351B67BA0321DDa481E3c59DE6929",
+        "mumbai": "0xF962623BD751D6F11a57656359E36fA56ab01973",
+        "arbitrum_goerli": "0x75e6F7752cD5A9d5c71D550C8BC845Cffb1AB73f"
+      },
+      "FreeBetFactory": {
+        "gnosis": "0x5ec14a4cc525559c4943d4c14a8d9264a20a48a9",
+        "mumbai": "0x70cde5260b2625afe9b314d08740f63a23093328",
+        "arbitrum_goerli": "0xadcbb30fe2e02dadc0eda470dd57489bbb05b667"
+      },
+      "LP": {
+        "gnosis": "0x1091f604ea6bc882E4A22F978F8b0Bc15B9a71C6",
+        "mumbai": "0xb4B743c710c2b8B8dC40563f25A3F1334916add7",
+        "arbitrum_goerli": "0x38D831A17B8d33f9633b8aE8BE568498e56052Dc"
+      },
+      "ProxyOracle": {
+        "gnosis": "0xc3cfdaec753c6126e70190981f0812b59aaf07b2",
+        "mumbai": "0xf84003cce4cd2ce5dec6841a9c14080ff5466632",
+        "arbitrum_goerli": "0xA95D8Bd97F567380Bdc068462b9da547af37dAfD"
+      }
+    }
+  }
+}

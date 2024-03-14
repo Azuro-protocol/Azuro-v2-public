@@ -1,10 +1,8 @@
-const { BigNumber } = require("ethers");
 const { ethers } = require("hardhat");
 const hre = require("hardhat");
-const { createPool, addRole, bindRoles, grantRole, getTimeout, tokens } = require("../../utils/utils");
+const { createPool, addRole, grantRole, getTimeout, tokens } = require("../../utils/utils");
 
 const FACTORY_ADDRESS = process.env.FACTORY_ADDRESS;
-const AFFILIATEHELPER_ADDRESS = process.env.AFFILIATEHELPER_ADDRESS;
 const TOKEN_ADDRESS = process.env.TOKEN_ADDRESS;
 
 const ORACLES = JSON.parse(process.env.ORACLES ?? "[]");
@@ -23,33 +21,20 @@ async function main() {
   const minDepo = tokens(10);
   const daoFee = MULTIPLIER * 0.09; // 9%
   const dataProviderFee = MULTIPLIER * 0.01; // 1%
-  const affiliateFee = MULTIPLIER * 0.01; // 1%
+  const affiliateFee = MULTIPLIER * 0.6; // 60%
 
-  let factory, access, core, lp, azuroBet, affiliateHelper;
+  let factory, access, core, lp, azuroBet;
 
   console.log("Pool owner wallet: ", deployer.address);
-  console.log(
-    "\nminDepo:",
-    minDepo,
-    "\ndaoFee:",
-    daoFee,
-    "\ndataProviderFee:",
-    dataProviderFee,
-    "\naffiliateFee:",
-    affiliateFee
-  );
+  console.log("\nminDepo:", minDepo, "\ndaoFee:", daoFee, "\ndataProviderFee:", dataProviderFee);
 
   /// PRE-MATCH POOL
   const Factory = await ethers.getContractFactory("Factory", { signer: deployer });
   factory = await Factory.attach(FACTORY_ADDRESS);
 
-  const AffiliateHelper = await ethers.getContractFactory("AffiliateHelper", { signer: deployer });
-  affiliateHelper = await AffiliateHelper.attach(AFFILIATEHELPER_ADDRESS);
-
   ({ access, core, lp, azuroBet } = await createPool(
     ethers,
     factory,
-    affiliateHelper,
     deployer,
     TOKEN_ADDRESS,
     minDepo,
@@ -91,11 +76,11 @@ async function main() {
   await timeout();
   const rolesData = [
     { target: lp.address, selector: "0x69958ab9", roleId: oracleRoleId }, // cancelGame
-    { target: lp.address, selector: "0x0c6b6b7a", roleId: oracleRoleId }, // createGame
+    { target: lp.address, selector: "0x77207e95", roleId: oracleRoleId }, // createGame
     { target: lp.address, selector: "0xa8822061", roleId: oracleRoleId }, // shiftGame
     { target: core.address, selector: "0xbc4925fc", roleId: oracleRoleId }, // cancelCondition
     { target: core.address, selector: "0x8ea8c308", roleId: oracleRoleId }, // changeOdds
-    { target: core.address, selector: "0xc6600c7c", roleId: oracleRoleId }, // createCondition
+    { target: core.address, selector: "0x7c768a38", roleId: oracleRoleId }, // createCondition
     { target: core.address, selector: "0xbc4925fc", roleId: maintainerRoleId }, // cancelCondition
     { target: core.address, selector: "0x6fea02f0", roleId: maintainerRoleId }, // stopCondition
     { target: core.address, selector: "0x8ea8c308", roleId: oddsManagerRoleId }, // changeOdds

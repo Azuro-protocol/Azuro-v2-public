@@ -42,10 +42,10 @@ contract TestERC20 is Ownable, ERC20 {
         contestsDuration = _contestsDuration;
     }
 
-    function addPrivilegedAccounts(address account, bool active)
-        external
-        onlyOwner
-    {
+    function addPrivilegedAccounts(
+        address account,
+        bool active
+    ) external onlyOwner {
         privilegedAccounts[account] = active;
     }
 
@@ -84,11 +84,10 @@ contract TestERC20 is Ownable, ERC20 {
 
     constructor() ERC20("USDT test token", "USDT") {}
 
-    function transfer(address recipient, uint256 amount)
-        public
-        override
-        returns (bool)
-    {
+    function transfer(
+        address recipient,
+        uint256 amount
+    ) public override returns (bool) {
         if (
             block.timestamp > contestsStartDate &&
             block.timestamp < contestsStartDate + contestsDuration

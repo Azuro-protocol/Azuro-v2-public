@@ -1,6 +1,7 @@
 const { expect } = require("chai");
 const { ethers } = require("hardhat");
 const {
+  addLiquidity,
   getBlockTime,
   tokens,
   createCondition,
@@ -10,7 +11,6 @@ const {
   timeShift,
   getPluggedCore,
   getCreatePoolDetails,
-  getClaimParamsDef,
   deployContracts,
   createFactory,
   createPool,
@@ -23,7 +23,6 @@ const { MULTIPLIER } = require("../utils/constants");
 const LIQUIDITY = tokens(200000);
 const OUTCOMEWIN = 1;
 const OUTCOMELOSE = 2;
-const IPFS = ethers.utils.formatBytes32String("ipfs");
 
 const ONE_HOUR = 3600;
 const ONE_MINUTE = 60;
@@ -35,7 +34,7 @@ describe("Pool Factory test", function () {
   const minDepo = tokens(10);
   const daoFee = MULTIPLIER * 0.09; // 9%
   const dataProviderFee = MULTIPLIER * 0.01; // 1%
-  const affiliateFee = MULTIPLIER * 0.33; // 33%
+  const affiliateFee = MULTIPLIER * 0.6; // 60%
 
   const pool1 = 5000000;
   const pool2 = 5000000;
@@ -45,7 +44,7 @@ describe("Pool Factory test", function () {
 
   let dao, poolOwner, dataProvider, oracle, oracle2, maintainer, affiliate, affiliate2, bettor;
   let Access, LP, PrematchCore, WXDAI;
-  let factory, beaconAccess, beaconLP, beaconPrematchCore, beaconAzuroBet, access, core, affiliateHelper, wxDAI, lp;
+  let factory, beaconAccess, beaconLP, beaconPrematchCore, beaconAzuroBet, access, core, wxDAI, lp;
   let time;
 
   let gameId = 0;
@@ -56,7 +55,7 @@ describe("Pool Factory test", function () {
       await ethers.getSigners();
 
     const contracts = await deployContracts(ethers, dao);
-    ({ beaconAccess, beaconLP, beaconPrematchCore, beaconAzuroBet, affiliateHelper } = contracts);
+    ({ beaconAccess, beaconLP, beaconPrematchCore, beaconAzuroBet } = contracts);
 
     WXDAI = await ethers.getContractFactory("WETH9");
     wxDAI = await WXDAI.deploy();
@@ -69,13 +68,17 @@ describe("Pool Factory test", function () {
 
     PrematchCore = await ethers.getContractFactory("PrematchCore", {
       signer: poolOwner,
-      libraries: {
-        AffiliateHelper: affiliateHelper.address,
-      },
       unsafeAllowCustomTypes: true,
     });
 
-    factory = await createFactory(ethers, dao, beaconAccess, beaconLP, beaconPrematchCore, contracts.beaconAzuroBet);
+    factory = await createFactory(
+      ethers,
+      dao,
+      beaconAccess,
+      beaconLP,
+      beaconPrematchCore,
+      contracts.beaconAzuroBet
+    );
   });
   it("Create new pool", async () => {
     // Create pool
@@ -99,10 +102,10 @@ describe("Pool Factory test", function () {
 
     // Test created pool
     await wxDAI.connect(bettor).approve(lp.address, approveAmount);
-    await lp.connect(bettor).addLiquidity(LIQUIDITY);
+    await addLiquidity(lp, bettor, LIQUIDITY);
 
     time = await getBlockTime(ethers);
-    await createGame(lp, oracle, ++gameId, IPFS, time + ONE_HOUR);
+    await createGame(lp, oracle, ++gameId, time + ONE_HOUR);
 
     await createCondition(
       core,
@@ -112,7 +115,8 @@ describe("Pool Factory test", function () {
       [pool2, pool1],
       [OUTCOMEWIN, OUTCOMELOSE],
       reinforcement,
-      marginality
+      marginality,
+      false
     );
 
     const tokenId = await makeBetGetTokenId(
@@ -124,7 +128,8 @@ describe("Pool Factory test", function () {
       betAmount,
       OUTCOMEWIN,
       time + 10,
-      0
+      0,
+      false
     );
 
     await expect(lp.connect(poolOwner).addCore(core.address)).to.be.revertedWithCustomError(lp, "OnlyFactory");
@@ -132,13 +137,13 @@ describe("Pool Factory test", function () {
     await expect(switchCore(lp, core, bettor, false)).to.be.revertedWith("Ownable: account is not the owner");
 
     await timeShift(time + ONE_HOUR + ONE_MINUTE);
-    await core.connect(oracle).resolveCondition(condId, OUTCOMEWIN);
+    await core.connect(oracle).resolveCondition(condId, [OUTCOMEWIN]);
 
     await makeWithdrawPayout(lp, core, bettor, tokenId);
     await switchCore(lp, core, poolOwner, false);
 
     time = await getBlockTime(ethers);
-    await createGame(lp, oracle, ++gameId, IPFS, time + ONE_HOUR);
+    await createGame(lp, oracle, ++gameId, time + ONE_HOUR);
 
     await expect(
       createCondition(
@@ -149,7 +154,8 @@ describe("Pool Factory test", function () {
         [pool2, pool1],
         [OUTCOMEWIN, OUTCOMELOSE],
         reinforcement,
-        marginality
+        marginality,
+        false
       )
     ).to.be.revertedWithCustomError(lp, "CoreNotActive");
   });
@@ -158,7 +164,6 @@ describe("Pool Factory test", function () {
     const { core, lp } = await createPool(
       ethers,
       factory,
-      affiliateHelper,
       poolOwner,
       wxDAI.address,
       minDepo,
@@ -171,7 +176,6 @@ describe("Pool Factory test", function () {
     const pool2 = await createPool(
       ethers,
       factory,
-      affiliateHelper,
       poolOwner,
       wxDAI.address,
       minDepo,
@@ -183,13 +187,6 @@ describe("Pool Factory test", function () {
 
     await expect(switchCore(lp, pool2.core, poolOwner, false)).to.be.revertedWithCustomError(lp, "UnknownCore");
     await expect(switchCore(pool2.lp, core, poolOwner, false)).to.be.revertedWithCustomError(lp, "UnknownCore");
-
-    await expect(
-      lp.claimAffiliateRewardFor(pool2.core.address, getClaimParamsDef(), poolOwner.address)
-    ).to.be.revertedWithCustomError(lp, "UnknownCore");
-    await expect(
-      pool2.lp.claimAffiliateRewardFor(core.address, getClaimParamsDef(), poolOwner.address)
-    ).to.be.revertedWithCustomError(lp, "UnknownCore");
 
     await expect(
       lp.connect(poolOwner).updateCoreSettings(pool2.core.address, 1, MULTIPLIER, tokens(1))
@@ -206,7 +203,6 @@ describe("Pool Factory test", function () {
     ({ access, core, lp } = await createPool(
       ethers,
       factory,
-      affiliateHelper,
       poolOwner,
       wxDAI.address,
       minDepo,

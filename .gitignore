@@ -10,7 +10,8 @@ cache
 
 flatten/
 
-\.env\.bak
+\.bak
+\.env*
 
 coverage/
 

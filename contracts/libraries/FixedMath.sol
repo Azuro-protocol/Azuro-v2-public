@@ -6,6 +6,16 @@ pragma solidity ^0.8.9;
 library FixedMath {
     uint256 constant ONE = 1e12;
 
+    /**
+     * @notice Get the ratio of `self` and `other` that is larger than 'ONE'.
+     */
+    function ratio(
+        uint256 self,
+        uint256 other
+    ) internal pure returns (uint256) {
+        return self > other ? div(self, other) : div(other, self);
+    }
+
     function mul(uint256 self, uint256 other) internal pure returns (uint256) {
         return (self * other) / ONE;
     }
@@ -14,18 +24,11 @@ library FixedMath {
         return (self * ONE) / other;
     }
 
-    function sqr(uint256 self) internal pure returns (uint256) {
-        return (self * self) / ONE;
-    }
-
-    function sqrt(uint256 self) internal pure returns (uint256) {
-        self *= ONE;
-        uint256 previous = self;
-        uint256 next = (self + 1) / 2;
-        while (next < previous) {
-            previous = next;
-            next = (self / next + next) / 2;
-        }
-        return previous;
+    /**
+     * @notice Implementation of the sigmoid function.
+     * @notice The sigmoid function is commonly used in machine learning to limit output values within a range of 0 to 1.
+     */
+    function sigmoid(uint256 self) internal pure returns (uint256) {
+        return (self * ONE) / (self + ONE);
     }
 }

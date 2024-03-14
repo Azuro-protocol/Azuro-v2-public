@@ -12,15 +12,17 @@ interface ICondition {
 
     struct Condition {
         uint256 gameId;
-        uint128[2] funds;
-        uint128[2] virtualFunds;
+        uint128[] payouts;
+        uint128[] virtualFunds;
+        uint128 totalNetBets;
         uint128 reinforcement;
-        uint128 affiliatesReward;
-        uint64[2] outcomes;
-        uint64 outcomeWin;
+        uint128 fund;
         uint64 margin;
-        address oracle;
+        uint64 endsAt;
+        uint48 lastDepositId;
+        uint8 winningOutcomesCount;
         ConditionState state;
-        uint48 leaf;
+        address oracle;
+        bool isExpressForbidden;
     }
 }
