@@ -43,7 +43,6 @@
     "solidity-coverage": "^0.8.2"
   },
   "dependencies": {
-    "@chainlink/contracts": "0.6.1",
     "@nomicfoundation/hardhat-chai-matchers": "^1.0.4",
     "@nomiclabs/hardhat-etherscan": "^3.1.1",
     "@openzeppelin/contracts": "4.7.3",
