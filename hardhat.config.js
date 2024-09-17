@@ -94,7 +94,7 @@ if (MUMBAI_PRIVATE_KEY != "") {
 
 if (POLYGON_PRIVATE_KEY != "") {
   exportNetworks["polygon"] = {
-    url: "https://polygon.llamarpc.com",
+    url: "https://polygon-rpc.com",
     accounts: [`${POLYGON_PRIVATE_KEY}`],
   };
 }
