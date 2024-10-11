@@ -1,0 +1,195 @@
+
+
+# Eğitim
+#  Bu konunun bazı bölümleri makine çevirisi olabilir.
+
+# ```Azure işlem ve ağ hizmetlerini 
+```
+     açıklama~Alıştırma - //Ağ erişimini yapılandırma
+./tamamlandı
+```
+100 XP
+10 dakika
+Hesabınızı doğrulayın
+```
+# Bu alıştırmada, bu modülün önceki bölümlerinde oluşturduğunuz sanal makineye (VM) erişimi yapılandıracaksınız.
+
+ # Önemli
+
+# Microsoft Learn korumalı alanı hala çalışıyor olmalıdır. Korumalı alan zaman aşımına uğradıysa önceki alıştırmayı (Alıştırma - Azure sanal makinesi oluşturma) yinelemeniz gerekir.
+
+* Daha önce oluşturduğunuz VM'nin hala çalıştığını doğrulamak için aşağıdaki komutu kullanın:
+
+# Azure CLI
+
+Kopyala
+az vm list
+
+
+Boş bir yanıt []alırsanız, bu modüldeki ilk alıştırmayı yeniden tamamlamanız gerekir. Sonuç geçerli VM'nizi ve ayarlarını listelerse devam edebilirsiniz.
+
+Şu anda Nginx'i oluşturup yüklediğiniz VM'ye İnternet'ten erişilemiyor. 80 numaralı bağlantı noktasında gelen HTTP erişimine izin vererek bunu değiştiren bir ağ güvenlik grubu oluşturursunuz.
+
+Görev 1: Web sunucunuza erişme
+Bu bölümde sanal makinenizin IP adresini alacak ve web sunucunuzun giriş sayfasına erişmeye çalışacaksınız.
+
+Sanal makinenizin IP adresini almak ve sonucu Bash değişkeni olarak kaydetmek için aşağıdaki az vm list-ip-addresses komutunu çalıştırın:
+
+Azure CLI
+
+Kopyala
+IPADDRESS="$(az vm list-ip-addresses \
+  --resource-group "[sandbox resource group name]" \
+  --name my-vm \
+  --query "[].virtualMachine.network.publicIpAddresses[*].ipAddress" \
+  --output tsv)"    
+Giriş sayfasını indirmek için aşağıdaki curl komutunu çalıştırın:
+
+Çarpışma
+
+Kopyala
+curl --connect-timeout 5 http://$IPADDRESS
+--connect-timeoutbağımsız değişkeni, bağlantının gerçekleştirilmesi için beş saniye beklenmesini sağlar. Beş saniye sonra bağlantının zaman aşımına uğradığını belirten bir hata iletisi görürsünüz:
+
+Çıktı
+
+Kopyala
+curl: (28) Connection timed out after 5001 milliseconds
+Bu ileti, vm'ye zaman aşımı süresi içinde erişilebildiği anlamına gelir.
+
+İsteğe bağlı olarak web sunucusuna tarayıcıdan erişmeyi deneyebilirsiniz:
+
+Aşağıdaki komutu çalıştırarak sanal makinenizin IP adresini konsola yazdırın:
+
+Çarpışma
+
+Kopyala
+echo $IPADDRESS       
+23.102.42.235 gibi bir IP adresi görürsünüz.
+
+Gördüğünüz IP adresini panoya kopyalayın.
+
+Yeni bir tarayıcı sekmesi açın ve web sunucunuza gidin. Birkaç dakika sonra bağlantının gerçekleşmediğini göreceksiniz. Tarayıcının zaman aşımına geçmesini beklerseniz şuna benzer bir şey görürsünüz:
+
+Bağlantının zaman aşımına uğradı iletisini gösteren bir web tarayıcısının ekran görüntüsü.
+
+Bu tarayıcı sekmesini daha sonra kullanmak üzere açık bırakın.
+
+Görev 2: Geçerli ağ güvenlik grubu kurallarını listeleme
+Web sunucunuza erişim sağlanamadı. Nedenini öğrenmek için geçerli ağ güvenlik grubu kurallarınızı inceleyelim.
+
+Sanal makinenizle ilişkili ağ güvenlik gruplarını listelemek için aşağıdaki az network nsg list komutunu çalıştırın:
+
+Azure CLI
+
+Kopyala
+az network nsg list \
+  --resource-group "[sandbox resource group name]" \
+  --query '[].name' \
+  --output tsv    
+Şu çıkışı görürsünüz:
+
+Çıktı
+
+Kopyala
+my-vmNSG
+
+
+Azure'daki her sanal makine en az bir ağ güvenlik grubuyla ilişkilendirilir. Bu durumda Azure, sizin için my-vmNSG adlı bir ağ güvenlik grubu oluşturmuştur.
+
+my-vmNSG adlı ağ güvenlik grubuyla ilişkili kuralları listelemek için aşağıdaki az network nsg rule list komutunu çalıştırın:
+
+Azure CLI
+
+Kopyala
+az network nsg rule list \
+  --resource-group "[sandbox resource group name]" \
+  --nsg-name my-vmNSG    
+Çıkışta JSON biçiminde büyük bir metin bloğu görürsünüz. Bir sonraki adımda benzer bir komut çalıştırarak çıkışı kolay okunur hale getireceksiniz.
+
+az network nsg rule list komutunu ikinci kez çalıştırın. Bu kez --query bağımsız değişkenini kullanarak her kural için yalnızca ad, öncelik, etkilenen bağlantı noktaları ve erişim (İzin Ver veya Reddet) bilgisini alın. --output bağımsız değişkeni çıkışı bir tablo olarak biçimlendirir ve bu sayede değerler kolayca okunabilir.
+
+Azure CLI
+
+Kopyala
+az network nsg rule list \
+  --resource-group "[sandbox resource group name]" \
+  --nsg-name my-vmNSG \
+  --query '[].{Name:name, Priority:priority, Port:destinationPortRange, Access:access}' \
+  --output table    
+Şu çıkışı görürsünüz:
+
+Çıktı
+
+Kopyala
+Name              Priority    Port    Access
+-----------------  ----------  ------  --------
+default-allow-ssh  1000        22      Allow
+
+default-allow-ssh adlı varsayılan kural. Bu kural, 22 (SSH) numaralı bağlantı noktası üzerinden gelen bağlantılara izin verir. SSH (Secure Shell), Linux'ta kullanılan ve yöneticilerin sisteme uzaktan erişmesini sağlayan bir protokoldür. Bu kuralın önceliği 1000'dir. Kurallar, düşük sayılar yüksek sayılardan önce olmak üzere öncelik sırasına göre işlenir.
+
+Bir Linux sanal makinesinin ağ güvenlik grubu varsayılan olarak yalnızca 22 numaralı bağlantı noktası üzerinden gelen ağ erişimine izin verir. Bu bağlantı noktası yöneticilerin sisteme erişmesini sağlar. HTTP üzerinden erişim sağlanması için 80 numaralı bağlantı noktası üzerinden gelen bağlantılara da izin vermeniz gerekir.
+
+Görev 3: Ağ güvenlik kuralını oluşturma
+Bu bölümde 80 (HTTP) numaralı bağlantı noktası üzerinden gelen trafiğe izin veren bir ağ güvenlik kuralı oluşturacaksınız.
+
+80 numaralı bağlantı noktası üzerinden gelen trafiğe izin veren allow-http adlı bir kural oluşturmak için aşağıdaki az network nsg rule create komutunu çalıştırın:
+
+Azure CLI
+
+Kopyala
+az network nsg rule create \
+  --resource-group "[sandbox resource group name]" \
+  --nsg-name my-vmNSG \
+  --name allow-http \
+  --protocol tcp \
+  --priority 100 \
+  --destination-port-range 80 \
+  --access Allow    
+Bu öğreticide önceliği 100 olarak ayarlayacaksınız. Bu örnekte önceliğin bir önemi yoktur. Çakışan bağlantı noktası aralıklarına sahip olmanız durumunda önceliği dikkate almanız gerekir.
+
+Yapılandırmayı doğrulamak için az network nsg rule list komutunu çalıştırarak güncelleştirilmiş kural listesini inceleyin:
+
+Azure CLI
+
+Kopyala
+az network nsg rule list \
+  --resource-group "[sandbox resource group name]" \
+  --nsg-name my-vmNSG \
+  --query '[].{Name:name, Priority:priority, Port:destinationPortRange, Access:access}' \
+  --output table    
+Hem default-allow-ssh kuralını hem de allow-http adlı yeni kuralınızı görürsünüz:
+
+Çıktı
+
+Kopyala
+Name              Priority    Port    Access
+-----------------  ----------  ------  --------
+default-allow-ssh  1000        22      Allow
+allow-http          100        80      Allow    
+Görev 4: Web sunucunuza yeniden erişme
+80 numaralı bağlantı noktasına ağ erişimini yapılandırdığınıza göre, web sunucusuna ikinci kez erişmeyi deneyelim.
+
+ Olumsuz
+
+NSG'yi güncelleştirdikten sonra, güncelleştirilmiş kuralların yayılması birkaç dakika sürebilir. İstediğiniz sonuçları elde edene kadar denemeler arasındaki duraklamalarla sonraki adımı yeniden deneyin.
+
+Daha önce çalıştırdığınız curl komutunu yeniden çalıştırın:
+
+Çarpışma
+
+Kopyala
+```curl 
+-connect-timeout 5 http://$IPADDRESS
+Şu yanıtı görürsünüz:
+```
+
+# HTML
+
+# Kopyala
+# <html><body><h2>Welcome to Azure! My name is my-vm.</h2></body></html>
+# İsteğe bağlı olarak web sunucunuzun açık olduğu tarayıcı sekmesini yenileyin. Giriş sayfasını görürsünüz:
+
+Web sunucusundan giriş sayfasını gösteren bir web tarayıcısının ekran görüntüsü. Giriş sayfasında bir karşılama iletisi görüntülenir.
+
+İyi iş. Normal kullanımda ihtiyacınız olan gelen ve giden ağ erişim kurallarını içeren tek bir ağ güvenlik grubu oluşturabilirsiniz. Aynı amaca yönelik kullanılan birden fazla sanal makineniz varsa bu ağ güvenlik grubunu oluşturduğunuz her yeni sanal makineye atayabilirsiniz. Bu teknik sayesinde birden fazla sanal makineye yönelik ağ erişimini tek bir kural kümesiyle denetleyebilirsiniz.

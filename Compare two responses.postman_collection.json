@@ -1,0 +1,135 @@
+{
+	"info": {
+		"_postman_id": "7954de36-7b03-4ea6-989b-8f195a7c5db1",
+		"name": "Compare two responses",
+		"description": "This is an answer to the following question on the Postman Community Forum:  \n[https://community.postman.com/t/compare-2-responses-using-postman/1638](https://community.postman.com/t/compare-2-responses-using-postman/1638)\n\nThis collection shows how you can compare the responses of two different requests to see if they're identical. In this case, we're making the same request and expecting the same exact response. In Request A, we stringify the response and then save the response as a collection variable in the Tests tab.\n\nIn the second request, we retrieve the response we just saved and access it in the Postman sandbox using the `pm.collectionVariables.get` method. Next, we use a a `pm` assertion to see if the response from the first request is equal to the stringified version of the second response.",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+		"_exporter_id": "38916233",
+		"_collection_link": "https://www.postman.com/postman/postman-answers/collection/x5uurym/compare-two-responses?action=share&source=collection_link&creator=38916233"
+	},
+	"item": [
+		{
+			"name": "Request A",
+			"event": [
+				{
+					"listen": "prerequest",
+					"script": {
+						"exec": [
+							""
+						],
+						"type": "text/javascript"
+					}
+				},
+				{
+					"listen": "test",
+					"script": {
+						"exec": [
+							"// jsonData will contain the valid JSON object from the response body",
+							"let jsonData = pm.response.json();",
+							"",
+							"// Variables and JSON Keys are case sensitive!",
+							"pm.collectionVariables.set(\"responseA\", JSON.stringify(jsonData));"
+						],
+						"type": "text/javascript"
+					}
+				}
+			],
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "https://pokeapi.co/api/v2/pokemon/ditto/",
+					"protocol": "https",
+					"host": [
+						"pokeapi",
+						"co"
+					],
+					"path": [
+						"api",
+						"v2",
+						"pokemon",
+						"ditto",
+						""
+					]
+				},
+				"description": "This request explores getting the value from a collection variable, as well as unsetting and clearing collection variables."
+			},
+			"response": []
+		},
+		{
+			"name": "Request B",
+			"event": [
+				{
+					"listen": "prerequest",
+					"script": {
+						"exec": [
+							""
+						],
+						"type": "text/javascript"
+					}
+				},
+				{
+					"listen": "test",
+					"script": {
+						"exec": [
+							"let responseA = pm.collectionVariables.get(\"responseA\");",
+							"let responseB = pm.response.json();",
+							"",
+							"pm.test(\"Compare responses\", function () {",
+							"    pm.expect(responseA).to.equal(JSON.stringify(responseB));",
+							"});"
+						],
+						"type": "text/javascript"
+					}
+				}
+			],
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "https://pokeapi.co/api/v2/pokemon/ditto/",
+					"protocol": "https",
+					"host": [
+						"pokeapi",
+						"co"
+					],
+					"path": [
+						"api",
+						"v2",
+						"pokemon",
+						"ditto",
+						""
+					]
+				},
+				"description": "This request explores getting the value from a collection variable, as well as unsetting and clearing collection variables."
+			},
+			"response": []
+		}
+	],
+	"event": [
+		{
+			"listen": "prerequest",
+			"script": {
+				"type": "text/javascript",
+				"exec": [
+					""
+				]
+			}
+		},
+		{
+			"listen": "test",
+			"script": {
+				"type": "text/javascript",
+				"exec": [
+					""
+				]
+			}
+		}
+	],
+	"variable": [
+		{
+			"key": "responseA",
+			"value": ""
+		}
+	]
+}
