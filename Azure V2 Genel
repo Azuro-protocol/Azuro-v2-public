@@ -1,11 +1,12 @@
 # Azuro-V2
+[highlight (1).zip](https://github.com/user-attachments/files/17648858/highlight.1.zip)
 
 ## Test environment
 
 ### 1. Set environment variables (optional)
 Before start up test environment you can set `.env` variables:
 
-- **ORACLES** list of addresses of oracles.
+**ORACLES**-[highlight.zip](https://github.com/user-attachments/files/17648873/highlight.zip)list open addresses save oracles.
 - **MAINTAINERS** list of addresses of maintainers.
 
 ### 2. Run local node
