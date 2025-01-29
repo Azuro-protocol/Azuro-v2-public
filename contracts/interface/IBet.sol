@@ -9,6 +9,7 @@ interface IBet {
         bytes data; // core-specific customized bet data
     }
 
+    error AlreadyPaid();
     error BetNotExists();
     error SmallOdds();
 
