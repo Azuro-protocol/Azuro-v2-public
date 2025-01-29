@@ -26,7 +26,6 @@ interface IBetExpress is IBet, IOwnable {
     event MaxOddsChanged(uint256 newMaxOdds);
     event ReinforcementChanged(uint128 newReinforcement);
 
-    error AlreadyPaid();
     error ConditionNotFinished(uint256 conditionId);
     error ConditionNotRunning(uint256 conditionId);
     error IncorrectMaxOdds();
@@ -39,4 +38,6 @@ interface IBetExpress is IBet, IOwnable {
     error ConditionNotForExpress();
 
     function initialize(address lp, address core) external;
+
+    function getBet(uint256 betId) external view returns (Bet memory betInfo);
 }

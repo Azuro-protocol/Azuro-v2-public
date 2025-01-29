@@ -45,7 +45,6 @@ interface ICoreBase is ICondition, IOwnable, IBet {
 
     error OnlyLp();
 
-    error AlreadyPaid();
     error DuplicateOutcomes(uint64 outcome);
     error IncorrectConditionId();
     error IncorrectMargin();
